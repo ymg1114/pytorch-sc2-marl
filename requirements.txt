@@ -1,0 +1,16 @@
+pyzmq
+blosc2
+gymnasium
+gym[atari]
+Box2D
+ale-py
+atari-py
+numpy
+pickle
+opencv-python
+torch
+# torchvision
+tensorboard==2.8.0
+tensorflow==2.8.0
+tensorflow-gpu==2.8.0
+tensorboardX

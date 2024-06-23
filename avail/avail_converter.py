@@ -20,6 +20,13 @@ class Avail():
         return avail_total_act
 
     def avail_act_parsing(self, avail_total_act):
+        """주의) 하드 코드 성향이 존재
+        no-op, stop, move-north, move-south, move-east, move-west, target~ 
+        순으로 avail_total_act (2d-ndarray) 가 구성됨. 이를 각 타겟 네트워크에 알맞게 슬라이싱
+        
+        여기서 "target~": 아군 혹은 적군의, 초기 생성 최대 인원수 까지를 -> 타겟팅 가능 인덱스로 지정
+        """
+        
         avail_act = np.zeros((self.observer.n_agents, self.observer.dim_act), dtype=np.float32) # (n_ally, dim_act)
         avail_act[:, NO_OP_IDX] = avail_total_act[:, NO_OP_IDX] # no-op
         avail_act[:, STOP_IDX] = avail_total_act[:, STOP_IDX] # stop
@@ -29,6 +36,13 @@ class Avail():
         return avail_act
 
     def avail_move_parsing(self, avail_total_act):
+        """주의) 하드 코드 성향이 존재
+        no-op, stop, move-north, move-south, move-east, move-west, target~ 
+        순으로 avail_total_act (2d-ndarray) 가 구성됨. 이를 각 타겟 네트워크에 알맞게 슬라이싱
+        
+        여기서 "target~": 아군 혹은 적군의, 초기 생성 최대 인원수 까지를 -> 타겟팅 가능 인덱스로 지정
+        """
+        
         avail_move = np.zeros((self.observer.n_agents, self.observer.dim_move), dtype=np.float32) # (n_ally, dim_move)
         avail_move[:, 0] = avail_total_act[:, MOVE_NORTH_IDX] # north
         avail_move[:, 1] = avail_total_act[:, MOVE_SOUTH_IDX] # south
@@ -38,6 +52,13 @@ class Avail():
         return avail_move
 
     def avail_target_parsing(self, avail_total_act):
+        """주의) 하드 코드 성향이 존재
+        no-op, stop, move-north, move-south, move-east, move-west, target~ 
+        순으로 avail_total_act (2d-ndarray) 가 구성됨. 이를 각 타겟 네트워크에 알맞게 슬라이싱
+        
+        여기서 "target~": 아군 혹은 적군의, 초기 생성 최대 인원수 까지를 -> 타겟팅 가능 인덱스로 지정
+        """
+        
         avail_target = np.zeros((self.observer.n_agents, self.observer.dim_target), dtype=np.float32) # (n_ally, dim_target)
         avail_target[:, :] = avail_total_act[:, MOVE_IDX+self.observer.dim_move:] # targets
 

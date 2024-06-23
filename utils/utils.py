@@ -59,7 +59,7 @@ with open(utils) as f:
     Machines = dict_to_simplenamespace(_p)
 
 
-utils = os.path.join(os.getcwd(), "utils", "sc2_config.json")
+utils = os.path.join(os.getcwd(), "utils", "sc2_config", f"sc2_{Params.map_name}_config.json")
 with open(utils) as f:
     SC2Config = json.load(f)
 

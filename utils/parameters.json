@@ -1,5 +1,6 @@
 {
     "algo": "PPO",
+    "map_name": "10gen_terran",
     "result_dir": null,
     "model_dir": null,
     "need_conv": false,

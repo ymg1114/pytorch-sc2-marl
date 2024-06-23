@@ -17,10 +17,10 @@ class Observer():
         self.n_agents = self.env_info["n_agents"] # 총 아군 초기 인원수
         self.n_enemies = self.env_core.n_enemies # 총 적군 초기 인원수
 
-        # TODO: 하드코드 구성
+        # TODO: 하드코드 디멘션 구성. SMAC2 원격 기본 환경의 변화에 취약
         self.dim_act = len(ACT) # no-op, stop, move, target
         self.dim_move = len(MOVE) # north, south, east, west
-        self.dim_target = self.n_actions - 2 - len(MOVE) # n_ally or n_enemy
+        self.dim_target = self.n_actions - 2 - len(MOVE) # max(n_ally, n_enemy)
         assert self.dim_target == max(self.n_agents, self.n_enemies)
 
         self.obs_size = self.env_core.get_obs_size()
@@ -58,14 +58,20 @@ class Observer():
         return obs_dict
 
     def get_obs_mine(self, obs_total):
-        """주의) 하드 코드 성향이 존재"""
+        """주의) 하드 코드 성향이 존재
+        move-feat -> enemy-feat -> ally-feat -> own-feat
+        순으로 obs_total (2d-ndarray) 가 구성됨. 이를 슬라이싱
+        """
         
         mine_move_feat = obs_total[:, :self.move_feats_dim]
         mine_own_feat = obs_total[:, -self.own_feats_dim:]
         return np.hstack((mine_move_feat, mine_own_feat))
 
     def get_obs_enemy(self, obs_total):
-        """주의) 하드 코드 성향이 존재"""
+        """주의) 하드 코드 성향이 존재
+        move-feat -> enemy-feat -> ally-feat -> own-feat
+        순으로 obs_total (2d-ndarray) 가 구성됨. 이를 슬라이싱
+        """
         
         n_enemies, n_enemy_feats = self.enemy_feats_dim
         src = self.move_feats_dim
@@ -73,7 +79,10 @@ class Observer():
         return obs_total[:, src: dst]
 
     def get_obs_ally(self, obs_total):
-        """주의) 하드 코드 성향이 존재"""
+        """주의) 하드 코드 성향이 존재
+        move-feat -> enemy-feat -> ally-feat -> own-feat
+        순으로 obs_total (2d-ndarray) 가 구성됨. 이를 슬라이싱
+        """
         
         n_allies, n_ally_feats = self.ally_feats_dim
         src = -self.own_feats_dim - n_allies*n_ally_feats

@@ -75,7 +75,7 @@ class Runner:
 
         env = WrapperSMAC2(
             capability_config=SC2Config,
-            map_name="10gen_terran",
+            map_name=self.args.map_name,
             debug=True,
             conic_fov=False,
             obs_own_pos=True,

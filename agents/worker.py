@@ -6,7 +6,7 @@ import torch
 # import torch.jit as jit
 import numpy as np
 
-from utils.utils import Protocol, SC2Config, encode, decode
+from utils.utils import Protocol, encode, decode, SC2Config
 
 from env.sc2_env_wrapper import WrapperSMAC2
 
@@ -32,7 +32,7 @@ class Worker:
 
         self.env = WrapperSMAC2(
             capability_config=SC2Config,
-            map_name="10gen_terran",
+            map_name=args.map_name,
             debug=True,
             conic_fov=False,
             obs_own_pos=True,
@@ -132,7 +132,7 @@ class Worker:
                 self.set_default_actions(act_dict)
                 
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
-                # env.render() # Uncomment for rendering
+                # self.env.render() # Uncomment for rendering
                 
                 self.epi_rew_vec += rew_vec
                 done_vec = torch.ones(self.env_info["n_agents"]) if terminated else torch.zeros(self.env_info["n_agents"])
@@ -144,7 +144,7 @@ class Worker:
                 hx = act_dict["hx"]
                 cx = act_dict["cx"]
                 
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.15)
 
                 if self.heartbeat is not None:
                     self.heartbeat.value = time.time()

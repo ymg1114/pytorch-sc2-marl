@@ -1,0 +1,15 @@
+{
+    "n_units": 8,
+    "n_enemies": 8,
+    "team_gen": {
+        "dist_type": "weighted_teams",
+        "unit_types": [
+            "marine"
+        ],
+        "exception_unit_types": [],
+        "weights": [
+            1.0
+        ],
+        "observe": true
+    }
+}

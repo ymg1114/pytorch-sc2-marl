@@ -10,12 +10,12 @@ if TYPE_CHECKING:
 
 # TODO: 리워드 파라미터 (가중치) 변경 필요
 REWARD_PARAM = {
-    "my_health": 0.005,
-    "my_death": -0.5,
-    "ally_health": 0.005,
-    "ally_death": -0.5,
-    "enemy_health": -0.005,
-    "enemy_death": 0.5,
+    "my_health": 0.003,
+    "my_death": -0.3,
+    "ally_health": 0.003,
+    "ally_death": -0.3,
+    "enemy_health": -0.003,
+    "enemy_death": 0.3,
     "win": 2.0,
     "lose": -2.0,
 }

@@ -80,34 +80,26 @@ def cal_log_probs(logit, sampled, on_select):
 
 
 def cal_hier_log_probs(act_dict):
-    """주의) 개념적으로, log_prob(a) + log_prob(b) == log_prob(a, b)
-    """
+    """개념적으로, log_prob(a) + log_prob(b) == log_prob(a, b)를 사용하여 계층적 log 확률을 연산."""
     
-    logit_act = act_dict["logit_act"]
-    logit_move = act_dict["logit_move"]
-    logit_target = act_dict["logit_target"]
+    keys = ["logit_act", "logit_move", "logit_target"]
+    sampled_keys = ["act_sampled", "move_sampled", "target_sampled"]
+    select_keys = ["on_select_act", "on_select_move", "on_select_target"]
+
+    hier_log_probs = sum(
+        cal_log_probs(act_dict[logit_key], act_dict[sampled_key], act_dict[select_key])
+        for logit_key, sampled_key, select_key in zip(keys, sampled_keys, select_keys)
+    )
     
-    act_sampled = act_dict["act_sampled"]
-    move_sampled = act_dict["move_sampled"]
-    target_sampled = act_dict["target_sampled"]
-    
-    on_select_act = act_dict["on_select_act"]
-    on_select_move = act_dict["on_select_move"]
-    on_select_target = act_dict["on_select_target"]
-    
-    hier_log_probs_act = cal_log_probs(logit_act, act_sampled, on_select_act)
-    hier_log_probs_move = cal_log_probs(logit_move, move_sampled, on_select_move)
-    hier_log_probs_target = cal_log_probs(logit_target, target_sampled, on_select_target)
-    
-    return hier_log_probs_act + hier_log_probs_move + hier_log_probs_target
-    
-    
-def rew_vet_to_scaled_scalar(rew_dict):
+    return hier_log_probs
+
+
+def rew_vec_to_scaled_scalar(rew_dict):
     rew_vec = rew_dict["rew_vec"]
     
     B, S, D = rew_vec.shape
     assert D == len(REWARD_PARAM)
-    
-    for rdx, (r_parma, weight) in enumerate(REWARD_PARAM.items()):
-        rew_vec[:, :, rdx] *= weight # 리워드 가중치 반영영
-    return rew_vec.sum(-1).unsqueeze(-1)
+
+    weights = torch.tensor(list(REWARD_PARAM.values()), dtype=rew_vec.dtype, device=rew_vec.device)
+    scaled_rew_vec = rew_vec * weights
+    return scaled_rew_vec.sum(-1, keepdim=True)

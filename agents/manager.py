@@ -5,7 +5,7 @@ import asyncio
 import numpy as np
 from collections import deque
 
-from utils.utils import Protocol, encode, decode
+from utils.utils import Protocol, encode, decode, extract_values, extract_nested_values
 
 
 class Manager:
@@ -61,13 +61,22 @@ class Manager:
                 elif protocol is Protocol.Stat:
                     self.stat_q.append(data)
                     if stat_pub_num >= self.stat_publish_cycle and len(self.stat_q) > 0:
+                        _epi_rew_vec = extract_values(self.stat_q, "epi_rew_vec")
+                        
+                        _battle_won = extract_nested_values(self.stat_q, "info", "battle_won")
+                        _dead_allies = extract_nested_values(self.stat_q, "info", "dead_allies")
+                        _dead_enemies = extract_nested_values(self.stat_q, "info", "dead_enemies")
+  
                         await self.pub_socket.send_multipart(
                             [
                                 *encode(
                                     Protocol.Stat,
                                     {
                                         "log_len": len(self.stat_q),
-                                        "mean_rew_vec": np.mean(self.stat_q, axis=(0, 1)) # mean epi_rew_vec in REWARD_PARAM-wise
+                                        "mean_battle_won":np.mean(_battle_won),
+                                        "mean_dead_allies":np.mean(_dead_allies),
+                                        "mean_dead_enemies":np.mean(_dead_enemies),
+                                        "mean_rew_vec": np.mean(_epi_rew_vec, axis=(0, 1)), # mean epi_rew_vec in REWARD_PARAM-wise
                                     },
                                 )
                             ]

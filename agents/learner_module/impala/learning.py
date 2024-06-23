@@ -3,11 +3,10 @@ import asyncio
 import time
 import torch
 import torch.nn.functional as F
-from typing import TYPE_CHECKING
 
 from utils.utils import ExecutionTimer
 
-from ..compute_loss import compute_v_trace, rew_vet_to_scaled_scalar, cal_hier_log_probs
+from ..compute_loss import compute_v_trace, rew_vec_to_scaled_scalar, cal_hier_log_probs
 
 
 async def learning(parent, timer: ExecutionTimer):
@@ -28,38 +27,25 @@ async def learning(parent, timer: ExecutionTimer):
                     assert "rew" in batch_dict
                     assert "info" in batch_dict
         
-                    obs_dict = {k: parent.to_gpu(v) for k, v, in batch_dict["obs"].items()}
-                    act_dict = {k: parent.to_gpu(v) for k, v, in batch_dict["act"].items()}
-                    rew_dict = {k: parent.to_gpu(v) for k, v, in batch_dict["rew"].items()}
-                    info_dict = {k: parent.to_gpu(v) for k, v, in batch_dict["info"].items()}
-                    
-                    # obs, act, rew, _, _, is_fir, hx, cx = parent.to_gpu(
-                    #     *batch_dict
-                    # )
-                    # behav_log_probs = (
-                    #     parent.CT(F.softmax(logits, dim=-1))
-                    #     .log_prob(act.squeeze(-1))
-                    #     .unsqueeze(-1)
-                    # )
+                    obs_dict = {k: v.to(parent.device) for k, v, in batch_dict["obs"].items()}
+                    act_dict = {k: v.to(parent.device) for k, v, in batch_dict["act"].items()}
+                    rew_dict = {k: v.to(parent.device) for k, v, in batch_dict["rew"].items()}
+                    info_dict = {k: v.to(parent.device) for k, v, in batch_dict["info"].items()}
 
                     behav_log_probs  = cal_hier_log_probs(act_dict)
-                    rew_sca = rew_vet_to_scaled_scalar(rew_dict)
+                    rew_sca = rew_vec_to_scaled_scalar(rew_dict)
                     
                     is_fir = info_dict["is_fir"]
                     hx, cx = obs_dict["hx"], obs_dict["cx"]
                     
                     # epoch-learning
                     for _ in range(parent.args.K_epoch):
-                        lstm_states = (
-                            hx[:, 0],
-                            cx[:, 0],
-                        )
-
                         # on-line model forwarding
                         log_probs, entropy, value = parent.model(
                             obs_dict,
                             act_dict,
-                            lstm_states,
+                            hx[:, 0],
+                            cx[:, 0],
                         )
                         with torch.no_grad():
                             # V-trace를 사용하여 off-policy corrections 연산

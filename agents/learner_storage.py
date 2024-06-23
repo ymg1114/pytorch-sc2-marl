@@ -4,9 +4,9 @@ import zmq.asyncio
 import asyncio
 
 import numpy as np
-import multiprocessing as mp
+# import multiprocessing as mp
 
-from .storage_module.shared_batch import SMInterFace
+from .storage_module.shared_batch import SMInterface
 
 from buffers.rollout_assembler import RolloutAssembler
 from utils.lock import Mutex
@@ -22,7 +22,7 @@ from rewarder.rewarder import REWARD_PARAM
 # timer = ExecutionTimer(num_transition=Params.seq_len*1) # LearnerStorage에서 데이터 처리량 (수신) / 부정확한 값이지만 어쩔 수 없음
 
 
-class LearnerStorage(SMInterFace):
+class LearnerStorage(SMInterface):
     def __init__(
         self,
         args,
@@ -80,9 +80,7 @@ class LearnerStorage(SMInterFace):
                 await self.rollout_assembler.push(data)
 
             elif protocol is Protocol.Stat:
-                self.log_stat_tensorboard(
-                    {"log_len": data["log_len"], "mean_rew_vec": data["mean_rew_vec"]}
-                )
+                self.log_stat_tensorboard(**data)
             else:
                 assert False, f"Wrong protocol: {protocol}"
 
@@ -101,47 +99,35 @@ class LearnerStorage(SMInterFace):
             await asyncio.sleep(0.001)
 
     @counted
-    def log_stat_tensorboard(self, data):
+    def log_stat_tensorboard(self, **data):
         _len = data["log_len"]
+        _mean_battle_won = data["mean_battle_won"]
+        _mean_dead_allies = data["mean_dead_allies"]
+        _mean_dead_enemies = data["mean_dead_enemies"]
         _mean_rew_vec = data["mean_rew_vec"]
 
-        # tag = f"worker/{_len}-game-mean-stat-of-epi-rew"
         x = self.log_stat_tensorboard.calls * _len  # global game counts
-        # y = _mean_rew_vec
-
-        # print(f"tag: {tag}, y: {y}, x: {x}")
 
         # TODO: 좋은 구조는 아님...
         if self.np_shared_stat_array is not None:
-            assert self.np_shared_stat_array.size == len(REWARD_PARAM) + 2
+            assert self.np_shared_stat_array.size == len(REWARD_PARAM) + 2 + 3
 
             self.np_shared_stat_array[0] = x  # global game counts
             self.np_shared_stat_array[1] = 1  # 기록 가능 활성화 (activate)
 
+            self.np_shared_stat_array[2] = _mean_battle_won  # mean_battle_won
+            self.np_shared_stat_array[3] = _mean_dead_allies  # mean_dead_allies
+            self.np_shared_stat_array[4] = _mean_dead_enemies  # mean_dead_enemies
+            
             for rdx, (r_parma, weight) in enumerate(REWARD_PARAM.items()):
                 weighted_reward = _mean_rew_vec[rdx] * weight
-                self.np_shared_stat_array[rdx+2] = weighted_reward  # rew_vec~
+                self.np_shared_stat_array[rdx+5] = weighted_reward  # rew_vec~
 
     def make_batch(self, rollout):
-        # sq = self.args.seq_len
         Bat = self.args.batch_size
         N = self.sh_data_num.value
 
-        # ac = self.args.action_space
-        # hs = self.args.hidden_size
-
-        # buf = self.args.buffer_size
-        # mem_size = int(
-        #     self.sh_obs_batch.shape[0] / (sq * sha)
-        # )  # TODO: 좋은 코드는 아닌 듯..
-        # assert buf == mem_size
-
         if N < Bat:
-            obs_space = self.env_space["obs"]
-            act_space = self.env_space["act"]
-            rew_space = self.env_space["rew"]
-            info_space = self.env_space["info"]
-            
             def _acquire(key, value):
                 assert hasattr(self, f"sh_{key}")
                 assert key in rollout
@@ -150,40 +136,14 @@ class LearnerStorage(SMInterFace):
                 assert B == Bat
                 return flatten(rollout[key])
 
-                
-            for k, v in obs_space.items():
-                B, S, D = v.nvec
-                getattr(self, f"sh_{k}")[S*N*D: S*(N+1)*D] = _acquire(k, v)
+            def _update_shared_memory(space):
+                for k, v in space.items():
+                    B, S, D = v.nvec
+                    getattr(self, f"sh_{k}")[S*N*D: S*(N+1)*D] = _acquire(k, v)
 
-            for k, v in act_space.items():
-                B, S, D = v.nvec
-                getattr(self, f"sh_{k}")[S*N*D: S*(N+1)*D] = _acquire(k, v)
-
-            for k, v in rew_space.items():
-                B, S, D = v.nvec
-                getattr(self, f"sh_{k}")[S*N*D: S*(N+1)*D] = _acquire(k, v)
-                
-            for k, v in info_space.items():
-                B, S, D = v.nvec
-                getattr(self, f"sh_{k}")[S*N*D: S*(N+1)*D] = _acquire(k, v)
-
-                # obs = rollout["obs"]
-                # act = rollout["act"]
-                # rew = rollout["rew"]
-                # logits = rollout["logits"]
-                # log_prob = rollout["log_prob"]
-                # is_fir = rollout["is_fir"]
-                # hx = rollout["hx"]
-                # cx = rollout["cx"]
-
-                # # 공유메모리에 학습 데이터 적재
-                # self.sh_obs_batch[sq * num * sha : sq * (num + 1) * sha] = flatten(obs)
-                # self.sh_act_batch[sq * num : sq * (num + 1)] = flatten(act)
-                # self.sh_rew_batch[sq * num : sq * (num + 1)] = flatten(rew)
-                # self.sh_logits_batch[sq * num * ac : sq * (num + 1) * ac] = flatten(logits)
-                # self.sh_log_prob_batch[sq * num : sq * (num + 1)] = flatten(log_prob)
-                # self.sh_is_fir_batch[sq * num : sq * (num + 1)] = flatten(is_fir)
-                # self.sh_hx_batch[sq * num * hs : sq * (num + 1) * hs] = flatten(hx)
-                # self.sh_cx_batch[sq * num * hs : sq * (num + 1) * hs] = flatten(cx)
+            _update_shared_memory(self.env_space["obs"])
+            _update_shared_memory(self.env_space["act"])
+            _update_shared_memory(self.env_space["rew"])
+            _update_shared_memory(self.env_space["info"])
 
             self.sh_data_num.value += 1

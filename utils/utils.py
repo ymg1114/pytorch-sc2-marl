@@ -9,7 +9,8 @@ import pickle
 import blosc2
 import numpy as np
 
-# import torchvision.transforms as T
+from functools import reduce
+import operator
 
 from collections import deque, defaultdict
 from contextlib import contextmanager
@@ -72,15 +73,6 @@ class SingletonMetaCls(type):
         return cls.__instances[cls]
 
 
-class ChildProcess(dict, metaclass=SingletonMetaCls): ...
-
-
-class IsExit(list, metaclass=SingletonMetaCls): ...
-
-
-IsExit().append(False)  # 초기화, TODO: 좋은 코드는 아닌 듯..
-
-
 dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
 result_dir = os.path.join("results", str(dt_string))
 model_dir = os.path.join(result_dir, "models")
@@ -92,8 +84,14 @@ ErrorComment = "Should be PPO or IMPALA"
 flatten = lambda obj: obj.numpy().reshape(-1).astype(np.float32)
 
 
-to_torch = lambda nparray: torch.from_numpy(nparray).type(torch.float32)
-
+def to_torch(array):
+    if isinstance(array, np.ndarray):
+        return torch.from_numpy(array).float()
+    elif isinstance(array, torch.Tensor):
+        return array
+    else:
+        raise TypeError("Input should be a numpy array or a torch tensor")
+    
 
 def extract_file_num(filename):
     parts = filename.stem.split("_")
@@ -154,10 +152,15 @@ class KillSubProcesses:
 
 
 def mul(shape_dim):
-    _val = 1
-    for e in shape_dim:
-        _val *= e
-    return _val
+    return reduce(operator.mul, shape_dim, 1)
+
+
+def extract_values(list_of_dicts, key):
+    return [d[key] for d in list_of_dicts]
+
+
+def extract_nested_values(deque_of_dicts, outer_key, inner_key):
+    return [d[outer_key][inner_key] for d in deque_of_dicts]
 
 
 def counted(f):

@@ -14,3 +14,4 @@ tensorboard==2.8.0
 tensorflow==2.8.0
 tensorflow-gpu==2.8.0
 tensorboardX
+smacv2==1.0.0 

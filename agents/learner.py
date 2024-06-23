@@ -1,8 +1,8 @@
 import os
 import zmq
-import time
-import torch
-import torch.nn.functional as F
+# import time
+# import torch
+# import torch.nn.functional as F
 import asyncio
 
 # import torch.nn.functional as F
@@ -16,14 +16,14 @@ from utils.lock import Mutex
 from utils.utils import (
     Protocol,
     encode,
-    make_gpu_batch,
+    # make_gpu_batch,
     ExecutionTimer,
     Params,
     to_torch,
 )
 from torch.optim import Adam, RMSprop
 
-from .storage_module.shared_batch import SMInterFace
+from .storage_module.shared_batch import SMInterface
 from . import (
     ppo_awrapper,
     impala_awrapper,
@@ -35,7 +35,7 @@ timer = ExecutionTimer(
 )  # Learner에서 데이터 처리량 (학습)
 
 
-class LearnerBase(SMInterFace):
+class LearnerBase(SMInterface):
     def __init__(
         self,
         args,
@@ -69,7 +69,7 @@ class LearnerBase(SMInterFace):
         self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr, eps=1e-5)
         self.CT = Categorical
 
-        self.to_gpu = partial(make_gpu_batch, device=self.device)
+        # self.to_gpu = partial(make_gpu_batch, device=self.device)
 
         self.zeromq_set(learner_ip, learner_port)
         self.get_shared_memory_interface()
@@ -134,14 +134,23 @@ class LearnerBase(SMInterFace):
 
         # TODO: 좋은 구조는 아님...
         if self.np_shared_stat_array is not None:
-            assert self.np_shared_stat_array.size == len(REWARD_PARAM) + 2
+            assert self.np_shared_stat_array.size == len(REWARD_PARAM) + 2 + 3
             if (
                 bool(self.np_shared_stat_array[1]) is True
             ):  # 기록 가능 활성화 (activate)
 
                 x = self.np_shared_stat_array[0]  # global game counts
+                
+                _mean_battle_won = self.np_shared_stat_array[2]  # mean_battle_won
+                _mean_dead_allies = self.np_shared_stat_array[3]  # mean_dead_allies
+                _mean_dead_enemies = self.np_shared_stat_array[4]  # mean_dead_enemies
+
+                self.writer.add_scalar("50-game-mean-battle-won", _mean_battle_won, x)
+                self.writer.add_scalar("50-game-mean-dead-allies", _mean_dead_allies, x)
+                self.writer.add_scalar("50-game-mean-dead-enemies", _mean_dead_enemies, x)
+                
                 for rdx, (r_parma, weight) in enumerate(REWARD_PARAM.items()):
-                    y = self.np_shared_stat_array[rdx+2]
+                    y = self.np_shared_stat_array[rdx+5]
                     tag = f"50-game-mean-rew-stat-of-{r_parma}"
                     self.writer.add_scalar(tag, y, x)
                     
@@ -166,59 +175,21 @@ class LearnerBase(SMInterFace):
     #     return dst
 
     def sample_batch_from_sh_memory(self):
-        # sq = self.args.seq_len
-        # # bn = self.args.batch_size
-        # hs = self.args.hidden_size
-        # ac = self.args.action_space
-
-        # _sh_obs_batch = self.sh_obs_batch.reshape((num_buf, sq, *sha))[idx]
-        # _sh_act_batch = self.sh_act_batch.reshape((num_buf, sq, 1))[idx]
-        # _sh_rew_batch = self.sh_rew_batch.reshape((num_buf, sq, 1))[idx]
-        # _sh_logits_batch = self.sh_logits_batch.reshape((num_buf, sq, ac))[idx]
-        # _sh_log_prob_batch = self.sh_log_prob_batch.reshape((num_buf, sq, 1))[idx]
-        # _sh_is_fir_batch = self.sh_is_fir_batch.reshape((num_buf, sq, 1))[idx]
-        # _sh_hx_batch = self.sh_hx_batch.reshape((num_buf, sq, hs))[idx]
-        # _sh_cx_batch = self.sh_cx_batch.reshape((num_buf, sq, hs))[idx]
-
-        # # (batch, seq, feat)
-        # sh_obs_bat = LearnerBase.copy_to_ndarray(_sh_obs_batch)
-        # sh_act_bat = LearnerBase.copy_to_ndarray(_sh_act_batch)
-        # sh_rew_bat = LearnerBase.copy_to_ndarray(_sh_rew_batch)
-        # sh_logits_bat = LearnerBase.copy_to_ndarray(_sh_logits_batch)
-        # sh_log_prob_bat = LearnerBase.copy_to_ndarray(_sh_log_prob_batch)
-        # sh_is_fir_bat = LearnerBase.copy_to_ndarray(_sh_is_fir_batch)
-        # sh_hx_bat = LearnerBase.copy_to_ndarray(_sh_hx_batch)
-        # sh_cx_bat = LearnerBase.copy_to_ndarray(_sh_cx_batch)
-        
         batch_dict = defaultdict(dict)
 
-        obs_space = self.env_space["obs"]
-        act_space = self.env_space["act"]
-        rew_space = self.env_space["rew"]
-        info_space = self.env_space["info"]
-        
-        for k, v in obs_space.items():
-            assert hasattr(self, f"sh_{k}")
-            B, S, D = v.nvec # Batch, Sequence, Dim
-            batch_dict["obs"][k] = to_torch(getattr(self, f"sh_{k}").reshape((B, S, D)))
-       
-        for k, v in act_space.items():
-            assert hasattr(self, f"sh_{k}")
-            B, S, D = v.nvec # Batch, Sequence, Dim
-            batch_dict["act"][k] = to_torch(getattr(self, f"sh_{k}").reshape((B, S, D)))
+        def _extract_batch(space_name, space):
+            for k, v in space.items():
+                assert hasattr(self, f"sh_{k}")
+                B, S, D = v.nvec  # Batch, Sequence, Dim
+                batch_dict[space_name][k] = to_torch(getattr(self, f"sh_{k}").reshape((B, S, D)))
 
-        for k, v in rew_space.items():
-            assert hasattr(self, f"sh_{k}")
-            B, S, D = v.nvec # Batch, Sequence, Dim
-            batch_dict["rew"][k] = to_torch(getattr(self, f"sh_{k}").reshape((B, S, D)))
-            
-        for k, v in info_space.items():
-            assert hasattr(self, f"sh_{k}")
-            B, S, D = v.nvec # Batch, Sequence, Dim
-            batch_dict["info"][k] = to_torch(getattr(self, f"sh_{k}").reshape((B, S, D)))
-       
+        _extract_batch("obs", self.env_space["obs"])
+        _extract_batch("act", self.env_space["act"])
+        _extract_batch("rew", self.env_space["rew"])
+        _extract_batch("info", self.env_space["info"])
+
         return batch_dict
-    
+        
     @ppo_awrapper(timer=timer)
     def learning_ppo(self): ...
 

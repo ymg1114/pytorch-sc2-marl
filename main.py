@@ -2,7 +2,7 @@ import os, sys
 import signal
 import atexit
 import time
-import gymnasium as gym
+# import gymnasium as gym
 import copy
 
 import torch
@@ -16,7 +16,7 @@ from multiprocessing import Process
 from datetime import datetime
 
 from agents.storage_module.shared_batch import (
-    reset_shared_on_policy_memory,
+    setup_shared_memory,
 )
 from agents.learner import (
     LearnerSinglePPO,
@@ -39,8 +39,6 @@ from utils.utils import (
     result_dir,
     model_dir,
     extract_file_num,
-    ChildProcess,
-    IsExit,
     ErrorComment,
     select_least_used_gpu,
 )
@@ -48,6 +46,7 @@ from utils.lock import Mutex
 
 
 fn_dict = {}
+child_process = {}
 
 
 def register(fn):
@@ -99,8 +98,7 @@ class Runner:
 
         self.LearnerCls = module_name_space.learner_cls
 
-        self.Model = module_name_space.model_cls(self.env_space, self.args)
-
+        self.Model = module_name_space.model_cls(self.args, self.env_space)
         self.Model.to(torch.device("cpu"))  # cpu 모델
 
     def set_model_weight(self, model_dir):
@@ -251,12 +249,12 @@ class Runner:
                     kwargs=src_w.get("kwargs"),
                     daemon=True,
                 )  # child-processes
-                ChildProcess().update({w: src_w})
+                child_process.update({w: src_w})
 
-            for wp in ChildProcess():
+            for wp in child_process:
                 wp.start()
 
-            for wp in ChildProcess():
+            for wp in child_process:
                 wp.join()
 
         except:
@@ -268,7 +266,7 @@ class Runner:
             err, log_dir = Runner.extract_err("worker")
             SaveErrorLog(err, log_dir)
 
-            for wp in ChildProcess():
+            for wp in child_process:
                 wp.terminate()
 
     @register
@@ -280,19 +278,12 @@ class Runner:
             mutex = Mutex()
 
             # 학습을 위한 공유메모리 확보
-            shm_ref_switcher = {
-                "PPO": reset_shared_on_policy_memory,
-                "IMPALA": reset_shared_on_policy_memory,
-            }
-            shm_ref_factory = shm_ref_switcher.get(
-                self.args.algo, lambda: AssertionError(ErrorComment)
-            )
-            shm_ref = shm_ref_factory(self.args, self.env_space)
+            shm_ref = setup_shared_memory(self.env_space)
             
-            len_rew_vec = self.env_space["info"]["is_fir"].nvec[-1]
+            len_rew_vec = self.env_space["rew"]["rew_vec"].nvec[-1]
             # TODO: 좋은 구조는 아님.
             shared_stat_array = mp.Array(
-                "f", 2+len_rew_vec
+                "f", 5+int(len_rew_vec)
             )  # [global game counts, activate, rew_vec~]
 
             heartbeat = mp.Value("f", time.time())
@@ -321,7 +312,7 @@ class Runner:
                 kwargs=src_s.get("kwargs"),
                 daemon=True,
             )  # child-processes
-            ChildProcess().update({s: src_s})
+            child_process.update({s: src_s})
 
             heartbeat = mp.Value("f", time.time())
 
@@ -352,12 +343,12 @@ class Runner:
                 kwargs=src_l.get("kwargs"),
                 daemon=True,
             )  # child-processes
-            ChildProcess().update({l: src_l})
+            child_process.update({l: src_l})
 
-            for lp in ChildProcess():
+            for lp in child_process:
                 lp.start()
 
-            for lp in ChildProcess():
+            for lp in child_process:
                 lp.join()
 
         except:
@@ -369,7 +360,7 @@ class Runner:
             err, log_dir = Runner.extract_err("learner")
             SaveErrorLog(err, log_dir)
 
-            for lp in ChildProcess():
+            for lp in child_process:
                 lp.terminate()
 
     def start(self):
@@ -384,8 +375,6 @@ class Runner:
 
             # 자식 프로세스 종료 함수
             def terminate_processes(processes):
-                IsExit()[0] = True
-
                 for p in processes:
                     if p.is_alive():
                         p.terminate()
@@ -394,13 +383,13 @@ class Runner:
             # 종료 시그널 핸들러 설정
             def signal_handler(signum, frame):
                 print("Signal received, terminating processes")
-                terminate_processes(ChildProcess())
+                terminate_processes(child_process)
 
             signal.signal(signal.SIGINT, signal_handler)
             signal.signal(signal.SIGTERM, signal_handler)
 
             # 프로세스 종료 시 실행될 함수 등록
-            atexit.register(terminate_processes, ChildProcess())
+            atexit.register(terminate_processes, child_process)
 
         try:
             if func_name in fn_dict:
@@ -415,7 +404,7 @@ class Runner:
             print(f"error: {e}")
             traceback.print_exc(limit=128)
 
-            for p in ChildProcess():
+            for p in child_process:
                 if p.is_alive():
                     p.terminate()
                     p.join()

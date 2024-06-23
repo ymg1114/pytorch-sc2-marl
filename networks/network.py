@@ -11,14 +11,27 @@ if TYPE_CHECKING:
 from utils.utils import *
 
 
+def check_for_nan(tensor, name):
+    if torch.isnan(tensor).any():
+        print(f"NaN values found in {name}")
+        print(tensor)
+        
+        
+def symlog(x):
+    return torch.sign(x) * torch.log1p(torch.abs(x))
+
+
+def symexp(x):
+    return torch.sign(x) * (torch.exp(torch.abs(x)) - 1)
+
+
 def build_dist(logit, avail):
     assert logit.shape == avail.shape
-    _avail = avail.clone() # 레퍼런스 오염 방지
-    _avail[_avail == 0] = -1e+7 # 선택 불가
-    _avail[_avail == 1] = 1.0 # 선택 가능
-
+    if isinstance(avail, np.ndarray):
+        avail = torch.tensor(avail, dtype=logit.dtype, device=logit.device)
+    
+    _avail = torch.where(avail == 0, torch.tensor(-1e16, dtype=logit.dtype, device=logit.device), torch.tensor(1.0, dtype=logit.dtype, device=logit.device))
     masked_logit = logit + _avail
-
     probs = F.softmax(masked_logit, dim=-1)
     return Categorical(probs)
 
@@ -87,14 +100,15 @@ class ModelSingle(nn.Module):
         mine_v = F.relu(self.mine_attn_v(obs_mine))
 
         ec_body = F.relu(self.encode_body(torch.cat([ec_mine, ec_ally, ec_enemy], dim=-1)))
-        
-        return self.multihead_attn(ec_mine, ec_body, mine_v, key_padding_mask=dead_units_mask.bool()) # q, k, v
+
+        attn_out, attn_weights = self.multihead_attn(ec_mine, ec_body, mine_v, key_padding_mask=dead_units_mask.float()) # q, k, v
+        return attn_out, attn_weights
     
     def get_dists(self, x, obs_dict):
         avail_act = obs_dict["avail_act"]
         avail_move = obs_dict["avail_move"]
         avail_target = obs_dict["avail_target"]
-        
+
         logit_act = self.logit_act(x)
         logit_move = self.logit_move(x)
         logit_target = self.logit_target(x)
@@ -102,13 +116,13 @@ class ModelSingle(nn.Module):
         dist_act = build_dist(logit_act, avail_act)
         dist_move = build_dist(logit_move, avail_move)
         dist_target = build_dist(logit_target, avail_target)
-        
+
         return dist_act, dist_move, dist_target
 
-    def act(self, obs_dict, lstm_hxs):
+    def act(self, obs_dict, hx, cx):
         attn_out, attn_weights = self.body_encode(obs_dict)
         
-        hx, cx = self.lstmcell(attn_out, lstm_hxs)
+        hx, cx = self.lstmcell(attn_out, (hx, cx))
 
         dist_act, dist_move, dist_target = self.get_dists(hx, obs_dict)
 
@@ -117,20 +131,18 @@ class ModelSingle(nn.Module):
         target_sampled = dist_target.sample().detach()
 
         out_dict = {
-            "act_sampled": act_sampled,
-            "move_sampled": move_sampled,
-            "target_sampled": target_sampled,
+            "act_sampled": act_sampled.unsqueeze(-1),
+            "move_sampled": move_sampled.unsqueeze(-1),
+            "target_sampled": target_sampled.unsqueeze(-1),
             "logit_act": dist_act.logits.detach(),
             "logit_move": dist_move.logits.detach(),
             "logit_target": dist_target.logits.detach(),
-            # "log_prob_act": dist_act.log_prob(act_sampled).detach(),
-            # "log_prob_move": dist_move.log_prob(move_sampled).detach(),
-            # "log_prob_target": dist_target.log_prob(target_sampled).detach(),
-            "lstm_hxs": (hx.detach(), cx.detach()),
+            "hx": hx.detach(),
+            "cx": cx.detach(),
         }
         return out_dict
 
-    def forward(self, obs_dict, act_dict, lstm_hxs):
+    def forward(self, obs_dict, act_dict, hx, cx):
         on_select_act = act_dict["on_select_act"]
         on_select_move = act_dict["on_select_move"]
         on_select_target = act_dict["on_select_target"]
@@ -138,7 +150,6 @@ class ModelSingle(nn.Module):
         attn_out, attn_weights = self.body_encode(obs_dict)
         B, S, _ = attn_out.shape
         
-        hx, cx = lstm_hxs
         output = []
         for i in range(S):
             hx, cx = self.lstmcell(attn_out[:, i], (hx, cx))
@@ -146,25 +157,26 @@ class ModelSingle(nn.Module):
         output = torch.stack(output, dim=1)
 
         value = self.value(output)
-        
         dist_act, dist_move, dist_target = self.get_dists(output, obs_dict)
 
         act_sampled = dist_act.sample().detach()
         move_sampled = dist_move.sample().detach()
         target_sampled = dist_target.sample().detach()
 
-        log_probs = 0.0
-        log_probs += on_select_act * dist_act.log_prob(act_sampled.squeeze(-1)).unsqueeze(-1)
-        log_probs += on_select_move * dist_move.log_prob(move_sampled.squeeze(-1)).unsqueeze(-1)
-        log_probs += on_select_target * dist_target.log_prob(target_sampled.squeeze(-1)).unsqueeze(-1)
-
-        entropy = 0.0
-        entropy += on_select_act * dist_act.entropy()
-        entropy += on_select_move * dist_move.entropy()
-        entropy += on_select_target * dist_target.entropy()
-
-        return (
-            log_probs.view(B, S, -1),
-            entropy.view(B, S, -1),
-            value.view(B, S, -1),
+        log_probs = sum(
+            on_select * dist.log_prob(sampled.squeeze(-1)).unsqueeze(-1)
+            for on_select, dist, sampled in zip(
+                [on_select_act, on_select_move, on_select_target],
+                [dist_act, dist_move, dist_target],
+                [act_sampled, move_sampled, target_sampled]
+            )
         )
+        
+        entropy = sum(
+            on_select * dist.entropy().unsqueeze(-1)
+            for on_select, dist in zip(
+                [on_select_act, on_select_move, on_select_target],
+                [dist_act, dist_move, dist_target]
+            )
+        )
+        return log_probs.view(B, S, -1), entropy.view(B, S, -1), value.view(B, S, -1)

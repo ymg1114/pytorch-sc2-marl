@@ -25,7 +25,7 @@ def make_as_array(rollout_obj):
 def rearrange_data(data):
     arranged_data = defaultdict(dict)
     
-    ids = data["id"]
+    ids = data["id"] # 각 경기 별 고유 에이전트 id
     obs_dict = data["obs_dict"]
     act_dict = data["act_dict"]
     rew_vec = data["rew_vec"]
@@ -38,6 +38,9 @@ def rearrange_data(data):
 
         for k, v in act_dict.items():
             arranged_data[a_id][k] = v[idx] # (dim, )
+            
+        # arranged_data[a_id].update({k: v[idx] for k, v in obs_dict.items()})  # (dim, )
+        # arranged_data[a_id].update({k: v[idx] for k, v in act_dict.items()})  # (dim, )
 
         arranged_data[a_id]["rew_vec"] = rew_vec[idx] # (rev, )
         arranged_data[a_id]["is_fir"] = is_fir[idx].unsqueeze(-1) # (1, )

@@ -144,7 +144,7 @@ class Worker:
                 hx = act_dict["hx"]
                 cx = act_dict["cx"]
                 
-                await asyncio.sleep(0.15)
+                await asyncio.sleep(0.4)
 
                 if self.heartbeat is not None:
                     self.heartbeat.value = time.time()

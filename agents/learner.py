@@ -8,18 +8,22 @@ import asyncio
 # import torch.nn.functional as F
 # import multiprocessing as mp
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, deque
 from torch.distributions import Categorical, Uniform
 from functools import partial
+
+import zmq.asyncio
 
 from utils.lock import Mutex
 from utils.utils import (
     Protocol,
     encode,
+    decode,
     # make_gpu_batch,
     ExecutionTimer,
     Params,
     to_torch,
+    extract_values,
 )
 from torch.optim import Adam, RMSprop
 
@@ -46,7 +50,6 @@ class LearnerBase(SMInterface):
         learner_ip,
         learner_port,
         env_space,
-        shared_stat_array=None,
         heartbeat=None,
     ):
         super().__init__(shm_ref=shm_ref, env_space=env_space)
@@ -55,12 +58,8 @@ class LearnerBase(SMInterface):
         self.mutex: Mutex = mutex
         self.stop_event = stop_event
 
-        if shared_stat_array is not None:
-            self.np_shared_stat_array: np.ndarray = np.frombuffer(
-                buffer=shared_stat_array.get_obj(), dtype=np.float32, count=-1
-            )
-
         self.heartbeat = heartbeat
+        self.stat_q = deque(maxlen=50)
 
         self.device = self.args.device
         self.model = model.to(self.device)
@@ -70,7 +69,6 @@ class LearnerBase(SMInterface):
         self.CT = Categorical
 
         # self.to_gpu = partial(make_gpu_batch, device=self.device)
-
         self.zeromq_set(learner_ip, learner_port)
         self.get_shared_memory_interface()
         from tensorboardX import SummaryWriter
@@ -80,8 +78,19 @@ class LearnerBase(SMInterface):
     def __del__(self):  # 소멸자
         if hasattr(self, "pub_socket"):
             self.pub_socket.close()
-
+        if hasattr(self, "sub_socket"):
+            self.sub_socket.close()
+            
     def zeromq_set(self, learner_ip, learner_port):
+        acontext = zmq.asyncio.Context()
+        
+        # worker <-> learner
+        self.sub_socket = acontext.socket(zmq.SUB) # subscribe stat-data
+        self.sub_socket.bind(
+            f"tcp://{learner_ip}:{int(learner_port) + 2}"
+        )
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"") 
+        
         context = zmq.Context()
         self.pub_socket = context.socket(zmq.PUB)
         self.pub_socket.bind(
@@ -131,30 +140,6 @@ class LearnerBase(SMInterface):
 
         if "alpha" in detached_losses:
             self.writer.add_scalar("alpha", detached_losses["alpha"], self.idx)
-
-        # TODO: 좋은 구조는 아님...
-        if self.np_shared_stat_array is not None:
-            assert self.np_shared_stat_array.size == len(REWARD_PARAM) + 2 + 3
-            if (
-                bool(self.np_shared_stat_array[1]) is True
-            ):  # 기록 가능 활성화 (activate)
-
-                x = self.np_shared_stat_array[0]  # global game counts
-                
-                _mean_battle_won = self.np_shared_stat_array[2]  # mean_battle_won
-                _mean_dead_allies = self.np_shared_stat_array[3]  # mean_dead_allies
-                _mean_dead_enemies = self.np_shared_stat_array[4]  # mean_dead_enemies
-
-                self.writer.add_scalar("50-game-mean-battle-won", _mean_battle_won, x)
-                self.writer.add_scalar("50-game-mean-dead-allies", _mean_dead_allies, x)
-                self.writer.add_scalar("50-game-mean-dead-enemies", _mean_dead_enemies, x)
-                
-                for rdx, (r_parma, weight) in enumerate(REWARD_PARAM.items()):
-                    y = self.np_shared_stat_array[rdx+5]
-                    tag = f"50-game-mean-rew-stat-of-{r_parma}"
-                    self.writer.add_scalar(tag, y, x)
-                    
-                self.np_shared_stat_array[1] = 0  # 기록 가능 비활성화 (deactivate)
                 
         if timer is not None and isinstance(timer, ExecutionTimer):
             for k, v in timer.timer_dict.items():
@@ -166,6 +151,25 @@ class LearnerBase(SMInterface):
                     f"{k}-transition-per-secs", sum(v) / (len(v) + 1e-6), self.idx
                 )
 
+        if len(self.stat_q) >= self.stat_q.maxlen:
+            sample_stat_dict = self.stat_q[-1]
+            stat_keys = list(sample_stat_dict.keys())
+            
+            _len = len(self.stat_q)
+            
+            for k in stat_keys:
+                if k != "epi_rew_vec":
+                    tag = f"mean-stat-{_len}-{k}"
+                    y = np.mean(extract_values(self.stat_q, k))
+                    self.writer.add_scalar(tag, y, self.idx)
+                    
+            _mean_rew_vec = np.mean(extract_values(self.stat_q, "epi_rew_vec"), axis=(0, 1))
+            
+            for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
+                tag = f"mean-weighted-reward-{r_param}"
+                weighted_reward = _mean_rew_vec[rdx] * weight
+                self.writer.add_scalar(tag, weighted_reward, self.idx)
+                
     # @staticmethod
     # def copy_to_ndarray(src):
     #     dst = np.empty(src.shape, dtype=src.dtype)
@@ -197,9 +201,19 @@ class LearnerBase(SMInterface):
     def learning_impala(self): ...
 
     def is_sh_ready(self):
-        bn = self.args.batch_size
-        val = self.sh_data_num.value
-        return True if val >= bn else False
+        Bat = self.args.batch_size
+        N = self.sh_data_num.value
+        return True if N >= Bat else False
+
+    async def sub_stat_data(self):
+        while not self.stop_event.is_set():
+            protocol, data = decode(*await self.sub_socket.recv_multipart())
+            assert protocol is Protocol.Stat
+            if len(self.stat_q) == self.stat_q.maxlen:
+                self.stat_q.popleft()  # FIFO
+            self.stat_q.append(data)
+
+            await asyncio.sleep(0.001)
 
     async def put_batch_to_batch_q(self):
         while not self.stop_event.is_set():
@@ -215,6 +229,7 @@ class LearnerBase(SMInterface):
         self.batch_queue = asyncio.Queue(1024)
         tasks = [
             asyncio.create_task(self.learning_ppo()),
+            asyncio.create_task(self.sub_stat_data()),
             asyncio.create_task(self.put_batch_to_batch_q()),
         ]
         await asyncio.gather(*tasks)
@@ -223,6 +238,7 @@ class LearnerBase(SMInterface):
         self.batch_queue = asyncio.Queue(1024)
         tasks = [
             asyncio.create_task(self.learning_impala()),
+            asyncio.create_task(self.sub_stat_data()),
             asyncio.create_task(self.put_batch_to_batch_q()),
         ]
         await asyncio.gather(*tasks)

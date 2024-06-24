@@ -32,7 +32,6 @@ class LearnerStorage(SMInterface):
         learner_ip,
         learner_port,
         env_space,
-        shared_stat_array=None,
         heartbeat=None,
     ):
         super().__init__(shm_ref=shm_ref, env_space=env_space)
@@ -41,11 +40,6 @@ class LearnerStorage(SMInterface):
         self.stop_event = stop_event
 
         self.mutex: Mutex = mutex
-
-        if shared_stat_array is not None:
-            self.np_shared_stat_array: np.ndarray = np.frombuffer(
-                buffer=shared_stat_array.get_obj(), dtype=np.float32, count=-1
-            )
 
         self.heartbeat = heartbeat
 
@@ -76,14 +70,9 @@ class LearnerStorage(SMInterface):
     async def retrieve_rollout_from_worker(self):
         while not self.stop_event.is_set():
             protocol, data = decode(*await self.sub_socket.recv_multipart())
-            if protocol is Protocol.Rollout:
-                await self.rollout_assembler.push(data)
-
-            elif protocol is Protocol.Stat:
-                self.log_stat_tensorboard(**data)
-            else:
-                assert False, f"Wrong protocol: {protocol}"
-
+            assert protocol is Protocol.Rollout
+            
+            await self.rollout_assembler.push(data)
             await asyncio.sleep(0.001)
 
     async def build_as_batch(self):
@@ -92,53 +81,31 @@ class LearnerStorage(SMInterface):
                 self.heartbeat.value = time.time()
 
             # with timer.timer("learner-storage-throughput", check_throughput=True):
-            data = await self.rollout_assembler.pop()
-            self.make_batch(data)
-            print("rollout is poped !")
+            trajectory = await self.rollout_assembler.pop()
+            self.make_batch(trajectory)
+            print("trajectory is poped !")
 
             await asyncio.sleep(0.001)
 
-    @counted
-    def log_stat_tensorboard(self, **data):
-        _len = data["log_len"]
-        _mean_battle_won = data["mean_battle_won"]
-        _mean_dead_allies = data["mean_dead_allies"]
-        _mean_dead_enemies = data["mean_dead_enemies"]
-        _mean_rew_vec = data["mean_rew_vec"]
-
-        x = self.log_stat_tensorboard.calls * _len  # global game counts
-
-        # TODO: 좋은 구조는 아님...
-        if self.np_shared_stat_array is not None:
-            assert self.np_shared_stat_array.size == len(REWARD_PARAM) + 2 + 3
-
-            self.np_shared_stat_array[0] = x  # global game counts
-            self.np_shared_stat_array[1] = 1  # 기록 가능 활성화 (activate)
-
-            self.np_shared_stat_array[2] = _mean_battle_won  # mean_battle_won
-            self.np_shared_stat_array[3] = _mean_dead_allies  # mean_dead_allies
-            self.np_shared_stat_array[4] = _mean_dead_enemies  # mean_dead_enemies
-            
-            for rdx, (r_parma, weight) in enumerate(REWARD_PARAM.items()):
-                weighted_reward = _mean_rew_vec[rdx] * weight
-                self.np_shared_stat_array[rdx+5] = weighted_reward  # rew_vec~
-
-    def make_batch(self, rollout):
+    def make_batch(self, trajectory):
         Bat = self.args.batch_size
         N = self.sh_data_num.value
 
         if N < Bat:
             def _acquire(key, value):
                 assert hasattr(self, f"sh_{key}")
-                assert key in rollout
+                assert key in trajectory
                 
                 B, S, D = value.nvec # Batch, Sequence, Dim
                 assert B == Bat
-                return flatten(rollout[key])
+                
+                _T = trajectory[key]
+                assert _T.shape == (S, D)
+                return flatten(trajectory[key])
 
             def _update_shared_memory(space):
                 for k, v in space.items():
-                    B, S, D = v.nvec
+                    B, S, D = v.nvec # Batch, Sequence, Dim
                     getattr(self, f"sh_{k}")[S*N*D: S*(N+1)*D] = _acquire(k, v)
 
             _update_shared_memory(self.env_space["obs"])

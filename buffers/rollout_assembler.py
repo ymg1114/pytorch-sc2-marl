@@ -6,12 +6,12 @@ from heapq import heappush, heappop
 from buffers.trajectory import Trajectory2
 
 
-def make_as_array(rollout_obj):
-    assert rollout_obj.len > 0
+def make_as_array(trajectory_obj):
+    assert trajectory_obj.len > 0
 
     refrased_rollout_data = defaultdict(list)
 
-    for rollout in rollout_obj.data:
+    for rollout in trajectory_obj.data:
         for key, value in rollout.items():
             if key != "id":  # 학습 데이터만 취급
                 refrased_rollout_data[key].append(value)
@@ -33,16 +33,10 @@ def rearrange_data(data):
     done = data["done"]
 
     for idx, a_id in enumerate(ids):
-        for k, v in obs_dict.items():
-            arranged_data[a_id][k] = v[idx] # (dim, )
+        arranged_data[a_id].update({k: v[idx] for k, v in obs_dict.items()})  # (dim, )
+        arranged_data[a_id].update({k: v[idx] for k, v in act_dict.items()})  # (dim, )
 
-        for k, v in act_dict.items():
-            arranged_data[a_id][k] = v[idx] # (dim, )
-            
-        # arranged_data[a_id].update({k: v[idx] for k, v in obs_dict.items()})  # (dim, )
-        # arranged_data[a_id].update({k: v[idx] for k, v in act_dict.items()})  # (dim, )
-
-        arranged_data[a_id]["rew_vec"] = rew_vec[idx] # (rev, )
+        arranged_data[a_id]["rew_vec"] = rew_vec[idx] # (rev_d, )
         arranged_data[a_id]["is_fir"] = is_fir[idx].unsqueeze(-1) # (1, )
         arranged_data[a_id]["done"] = done[idx].unsqueeze(-1) # (1, )
     

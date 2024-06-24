@@ -151,10 +151,11 @@ class WrapperSC2Env(StarCraft2Env):
         game_end_code = self.update_units()
 
         terminated = False
-        info = {"battle_won": False}
+        info = {}
+        # info = {"battle_won": False}
         
         # 각 유닛 (에이전트) 별 리워드 획득
-        reward_vec, info = self.rewarder.get(game_end_code, info)
+        reward_vec = self.rewarder.get(game_end_code)
 
         # count units that are still alive
         dead_allies, dead_enemies = 0, 0
@@ -182,6 +183,13 @@ class WrapperSC2Env(StarCraft2Env):
             # Battle is over
             terminated = True
             self.battles_game += 1
+            if game_end_code == 1 and not self.win_counted:
+                self.battles_won += 1
+                self.win_counted = True
+                # info["battle_won"] = True
+            elif game_end_code == -1 and not self.defeat_counted:
+                self.defeat_counted = True
+            
         elif self._episode_steps >= self.episode_limit:
             # Episode limit reached
             terminated = True

@@ -18,6 +18,40 @@ if TYPE_CHECKING:
     from networks.network import ModelSingle
 
 
+def check_act_avail(env, act_dict, n_agents):
+    converted_act_idx = env.act_dict_converter(act_dict)
+    avail_act_list = []
+    for a_id in range(n_agents):
+        avail_acts = env.get_avail_agent_actions(a_id)
+        avail_act_list.append(avail_acts)
+
+    for c_a, av_l in zip(converted_act_idx, avail_act_list):
+        assert av_l[c_a.item()] == 1, f"converted_act_idx: {converted_act_idx}, avail_act_list: {avail_act_list}"
+
+
+# def Wrapper(func):
+#     agent_tag = []
+#     is_full = [False]
+    
+#     def _inner(agents, n_agents):
+#         nonlocal agent_tag, is_full
+#         func(agents, n_agents, agent_tag, is_full)
+#     return _inner
+
+
+# @Wrapper
+def check_agent_id(agents, n_agents, agent_tag, is_full):
+    if not is_full[0]:
+        for agent in agents.values():
+            agent_tag.append(agent.tag)
+    
+    if len(agent_tag) == n_agents:
+        is_full[0] = True
+    
+    if is_full[0]:
+        assert agent_tag == [v.tag for v in agents.values()], f"agent_tag: {agent_tag}, agents: {agents} "
+    
+
 class Worker:
     def __init__(
         self, args, model, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, heartbeat=None
@@ -46,8 +80,10 @@ class Worker:
         self.zeromq_set(manager_ip, learner_ip, port, learner_port)
 
     def __del__(self):  # 소멸자
-        if hasattr(self, "pub_socket"):
-            self.pub_socket.close()
+        if hasattr(self, "rollout_pub_socket"):
+            self.rollout_pub_socket.close()
+        if hasattr(self, "stat_pub_socket"):
+            self.stat_pub_socket.close()
         if hasattr(self, "sub_socket"):
             self.sub_socket.close()
 
@@ -55,8 +91,12 @@ class Worker:
         context = zmq.asyncio.Context()
 
         # worker <-> manager
-        self.pub_socket = context.socket(zmq.PUB)
-        self.pub_socket.connect(f"tcp://{manager_ip}:{port}")  # publish rollout, stat
+        self.rollout_pub_socket = context.socket(zmq.PUB)
+        self.rollout_pub_socket.connect(f"tcp://{manager_ip}:{port}")  # publish rollout
+
+        # worker <-> learner
+        self.stat_pub_socket = context.socket(zmq.PUB)
+        self.stat_pub_socket.connect(f"tcp://{learner_ip}:{int(learner_port) + 2}")  # publish stat
 
         self.sub_socket = context.socket(zmq.SUB)
         self.sub_socket.connect(
@@ -74,16 +114,17 @@ class Worker:
             await asyncio.sleep(0.1)
 
     async def pub_rollout(self, **roll_out):
-        await self.pub_socket.send_multipart([*encode(Protocol.Rollout, roll_out)])
+        await self.rollout_pub_socket.send_multipart([*encode(Protocol.Rollout, roll_out)])
 
     async def pub_stat(self, info):
         stat_dict = {
-            "info": info,
+            **info,
+            **self.env.get_stats(),
             "epi_rew_vec": self.epi_rew_vec
         }
-        await self.pub_socket.send_multipart([*encode(Protocol.Stat, stat_dict)])
+        await self.stat_pub_socket.send_multipart([*encode(Protocol.Stat, stat_dict)])
         print(
-            f"worker_name: {self.worker_name} epi_rew_vec: {self.epi_rew_vec} pub stat to manager!"
+            f"worker_name: {self.worker_name} epi_rew_vec: {self.epi_rew_vec} pub stat to learner!"
         )
 
     async def life_cycle_chain(self):
@@ -126,10 +167,15 @@ class Worker:
             dead_agents_vec = torch.zeros(self.env_info["n_agents"])
             
             is_first = True
+            # agent_tag = [] # TODO: 디버그 관료시 제거 필요
+            # is_full = [False] # TODO: 디버그 관료시 제거 필요
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
                 act_dict = self.model.act(obs_dict, hx, cx)
                 self.set_default_actions(act_dict)
+                
+                # check_act_avail(self.env, act_dict, self.env_info["n_agents"])
+                # check_agent_id(self.env.agents, self.env_info["n_agents"], agent_tag, is_full)
                 
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
                 # self.env.render() # Uncomment for rendering

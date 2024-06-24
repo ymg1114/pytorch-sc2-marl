@@ -146,7 +146,6 @@ class Runner:
         learner_ip,
         learner_port,
         env_space,
-        shared_stat_array=None,
         heartbeat=None,
     ):
         storage = LearnerStorage(
@@ -157,7 +156,6 @@ class Runner:
             learner_ip,
             learner_port,
             env_space,
-            shared_stat_array,
             heartbeat,
         )
         asyncio.run(storage.shared_memory_chain())
@@ -173,7 +171,6 @@ class Runner:
         learner_ip,
         learner_port,
         env_space,
-        shared_stat_array=None,
         heartbeat=None,
     ):
         learner = learner_cls(
@@ -185,7 +182,6 @@ class Runner:
             learner_ip,
             learner_port,
             env_space,
-            shared_stat_array,
             heartbeat,
         )
         learning_chain_switcher = {
@@ -279,12 +275,6 @@ class Runner:
 
             # 학습을 위한 공유메모리 확보
             shm_ref = setup_shared_memory(self.env_space)
-            
-            len_rew_vec = self.env_space["rew"]["rew_vec"].nvec[-1]
-            # TODO: 좋은 구조는 아님.
-            shared_stat_array = mp.Array(
-                "f", 5+int(len_rew_vec)
-            )  # [global game counts, activate, rew_vec~]
 
             heartbeat = mp.Value("f", time.time())
 
@@ -300,7 +290,6 @@ class Runner:
                     self.env_space,
                 ),
                 "kwargs": {
-                    "shared_stat_array": shared_stat_array,
                     "heartbeat": heartbeat,
                 },
                 "heartbeat": heartbeat,
@@ -330,7 +319,6 @@ class Runner:
                     self.env_space,
                 ),
                 "kwargs": {
-                    "shared_stat_array": shared_stat_array,
                     "heartbeat": heartbeat,
                 },
                 "heartbeat": heartbeat,

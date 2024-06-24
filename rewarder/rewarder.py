@@ -133,29 +133,19 @@ def cal_enemy_death(env_core, rdx, rew_vec, **kwargs):
 @register(name="win")
 def cal_win(env_core, rdx, rew_vec, **kwargs):
     game_end_code = kwargs.get("game_end_code", "")
-    info = kwargs.get("info", "")
-    assert game_end_code != "" and info != ""
-
-    if game_end_code is not None:
-        if game_end_code == 1 and not env_core.win_counted:
-            env_core.battles_won += 1
-            env_core.win_counted = True
-            info["battle_won"] = True
-
-            rew_vec[rdx, :] = 1.0 # 승리
+    assert game_end_code != ""
+    
+    if game_end_code is not None and game_end_code == 1 :
+        rew_vec[rdx, :] = 1.0 # 승리
 
 
 @register(name="lose")
 def cal_lose(env_core, rdx, rew_vec, **kwargs):
     game_end_code = kwargs.get("game_end_code", "")
-    info = kwargs.get("info", "")
-    assert game_end_code != "" and info != ""
-
-    if game_end_code is not None:
-        if game_end_code == -1 and not env_core.defeat_counted:
-            env_core.defeat_counted = True
-            
-            rew_vec[rdx, :] = 1.0 # 패배
+    assert game_end_code != ""
+    
+    if game_end_code is not None and game_end_code == -1:
+        rew_vec[rdx, :] = 1.0 # 패배
 
 
 class Rewarder():
@@ -164,6 +154,7 @@ class Rewarder():
 
     def update(self, rew_vec):
         """리워드 연산 후, 자료형 업데이트"""
+        
         for al_id, al_unit in self.env_core.agents.items():
             if self.env_core.death_tracker_ally[al_id]: # already dead
                 rew_vec[:, al_id] *= 0.0 # 이미 죽어있는 아군 개체에 대해서는 더 이상 리워드를 연산하지 않음
@@ -178,7 +169,7 @@ class Rewarder():
                     # just died
                     self.env_core.death_tracker_enemy[e_id] = 1 # 자료형 업데이트
 
-    def get(self, game_end_code, info):
+    def get(self, game_end_code):
         """주의) 기존에 죽은 아군 유닛에 대해서는, 리워드를 더 이상 연산하지 않음
         TODO: 중복 로직 최적화 필요
         """
@@ -187,8 +178,8 @@ class Rewarder():
 
         for rdx, name in enumerate(REWARD_PARAM):
             assert name in r_func
-            r_func[name](self.env_core, rdx, rew_vec, game_end_code=game_end_code, info=info)
+            r_func[name](self.env_core, rdx, rew_vec, game_end_code=game_end_code)
 
         self.update(rew_vec)
 
-        return rew_vec.T, info # (Agents, REWARD)
+        return rew_vec.T # (Agents, REWARD)

@@ -5,7 +5,7 @@ import asyncio
 import numpy as np
 from collections import deque
 
-from utils.utils import Protocol, encode, decode, extract_values, extract_nested_values
+from utils.utils import Protocol, encode, decode
 
 
 class Manager:
@@ -14,10 +14,6 @@ class Manager:
         self.stop_event = stop_event
 
         self.data_q = deque(maxlen=1024)
-
-        self.stat_publish_cycle = 50
-        self.stat_q = deque(maxlen=self.stat_publish_cycle)
-
         self.zeromq_set(manager_ip, learner_ip, port, learner_port)
 
     def __del__(self):  # 소멸자
@@ -48,44 +44,14 @@ class Manager:
             await asyncio.sleep(0.001)
 
     async def pub_data(self):
-        stat_pub_num = 0  # 지역 변수
-
         while not self.stop_event.is_set():
             if len(self.data_q) > 0:
                 protocol, data = self.data_q.popleft()  # FIFO
-                if protocol is Protocol.Rollout:
-                    await self.pub_socket.send_multipart(
-                        [*encode(Protocol.Rollout, data)]
-                    )
+                assert protocol is Protocol.Rollout
 
-                elif protocol is Protocol.Stat:
-                    self.stat_q.append(data)
-                    if stat_pub_num >= self.stat_publish_cycle and len(self.stat_q) > 0:
-                        _epi_rew_vec = extract_values(self.stat_q, "epi_rew_vec")
-                        
-                        _battle_won = extract_nested_values(self.stat_q, "info", "battle_won")
-                        _dead_allies = extract_nested_values(self.stat_q, "info", "dead_allies")
-                        _dead_enemies = extract_nested_values(self.stat_q, "info", "dead_enemies")
-  
-                        await self.pub_socket.send_multipart(
-                            [
-                                *encode(
-                                    Protocol.Stat,
-                                    {
-                                        "log_len": len(self.stat_q),
-                                        "mean_battle_won":np.mean(_battle_won),
-                                        "mean_dead_allies":np.mean(_dead_allies),
-                                        "mean_dead_enemies":np.mean(_dead_enemies),
-                                        "mean_rew_vec": np.mean(_epi_rew_vec, axis=(0, 1)), # mean epi_rew_vec in REWARD_PARAM-wise
-                                    },
-                                )
-                            ]
-                        )
-                        stat_pub_num = 0
-                    stat_pub_num += 1
-                else:
-                    assert False, f"Wrong protocol: {protocol}"
-
+                await self.pub_socket.send_multipart(
+                    [*encode(Protocol.Rollout, data)]
+                )
             await asyncio.sleep(0.001)
 
     async def data_chain(self):

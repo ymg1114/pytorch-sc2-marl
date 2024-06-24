@@ -72,5 +72,4 @@ class Avail():
             "avail_move": self.avail_move_parsing(avail_total_act),
             "avail_target": self.avail_target_parsing(avail_total_act),
         }
-
         return avail_dict

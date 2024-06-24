@@ -167,8 +167,8 @@ class Worker:
             dead_agents_vec = torch.zeros(self.env_info["n_agents"])
             
             is_first = True
-            # agent_tag = [] # TODO: 디버그 관료시 제거 필요
-            # is_full = [False] # TODO: 디버그 관료시 제거 필요
+            # agent_tag = [] # TODO: 디버그 완료 후, 제거 필요
+            # is_full = [False] # TODO: 디버그 완료 후, 제거 필요
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
                 act_dict = self.model.act(obs_dict, hx, cx)

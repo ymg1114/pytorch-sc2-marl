@@ -147,6 +147,10 @@ class ModelSingle(nn.Module):
         on_select_move = act_dict["on_select_move"]
         on_select_target = act_dict["on_select_target"]
         
+        act_sampled = act_dict["act_sampled"]
+        move_sampled = act_dict["move_sampled"]
+        target_sampled = act_dict["target_sampled"]
+        
         attn_out, attn_weights = self.body_encode(obs_dict)
         B, S, _ = attn_out.shape
         
@@ -158,10 +162,6 @@ class ModelSingle(nn.Module):
 
         value = self.value(output)
         dist_act, dist_move, dist_target = self.get_dists(output, obs_dict)
-
-        act_sampled = dist_act.sample().detach()
-        move_sampled = dist_move.sample().detach()
-        target_sampled = dist_target.sample().detach()
 
         log_probs = sum(
             on_select * dist.log_prob(sampled.squeeze(-1)).unsqueeze(-1)

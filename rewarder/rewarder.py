@@ -135,7 +135,7 @@ def cal_win(env_core, rdx, rew_vec, **kwargs):
     game_end_code = kwargs.get("game_end_code", "")
     assert game_end_code != ""
     
-    if game_end_code is not None and game_end_code == 1 :
+    if game_end_code is not None and game_end_code == 1:
         rew_vec[rdx, :] = 1.0 # 승리
 
 

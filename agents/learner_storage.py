@@ -101,7 +101,7 @@ class LearnerStorage(SMInterface):
                 
                 _T = trajectory[key]
                 assert _T.shape == (S, D)
-                return flatten(trajectory[key])
+                return flatten(_T)
 
             def _update_shared_memory(space):
                 for k, v in space.items():

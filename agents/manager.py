@@ -13,7 +13,6 @@ class Manager:
         self.args = args
         self.stop_event = stop_event
 
-        self.data_q = deque(maxlen=1024)
         self.zeromq_set(manager_ip, learner_ip, port, learner_port)
 
     def __del__(self):  # 소멸자
@@ -37,24 +36,22 @@ class Manager:
     async def sub_data(self):
         while not self.stop_event.is_set():
             protocol, data = decode(*await self.sub_socket.recv_multipart())
-            if len(self.data_q) == self.data_q.maxlen:
-                self.data_q.popleft()  # FIFO
-            self.data_q.append((protocol, data))
-
+            await self.data_q.put((protocol, data))
+            
             await asyncio.sleep(0.001)
 
     async def pub_data(self):
         while not self.stop_event.is_set():
-            if len(self.data_q) > 0:
-                protocol, data = self.data_q.popleft()  # FIFO
-                assert protocol is Protocol.Rollout
+            protocol, data = await self.data_q.get()  # FIFO
+            assert protocol is Protocol.Rollout
 
-                await self.pub_socket.send_multipart(
-                    [*encode(Protocol.Rollout, data)]
-                )
+            await self.pub_socket.send_multipart(
+                [*encode(Protocol.Rollout, data)]
+            )
             await asyncio.sleep(0.001)
 
     async def data_chain(self):
+        self.data_q = asyncio.Queue(1024)
         tasks = [
             asyncio.create_task(self.sub_data()),
             asyncio.create_task(self.pub_data()),

@@ -59,8 +59,7 @@ class LearnerBase(SMInterface):
         self.stop_event = stop_event
 
         self.heartbeat = heartbeat
-        self.stat_q = deque(maxlen=50)
-
+        
         self.device = self.args.device
         self.model = model.to(self.device)
 
@@ -100,7 +99,7 @@ class LearnerBase(SMInterface):
     def pub_model(self, model_state_dict):  # learner -> worker
         self.pub_socket.send_multipart([*encode(Protocol.Model, model_state_dict)])
 
-    def log_loss_tensorboard(self, timer: ExecutionTimer, loss, detached_losses):
+    async def log_loss_tensorboard(self, timer: ExecutionTimer, loss, detached_losses):
         self.writer.add_scalar("total-loss", float(loss.item()), self.idx)
         if "value-loss" in detached_losses:
             self.writer.add_scalar(
@@ -151,24 +150,20 @@ class LearnerBase(SMInterface):
                     f"{k}-transition-per-secs", sum(v) / (len(v) + 1e-6), self.idx
                 )
 
-        if len(self.stat_q) >= self.stat_q.maxlen:
-            sample_stat_dict = self.stat_q[-1]
-            stat_keys = list(sample_stat_dict.keys())
-            
-            _len = len(self.stat_q)
-            
-            for k in stat_keys:
+        if self.stat_q.qsize() > 0:
+            stat_dict = await self.stat_q.get()
+
+            for k, v in stat_dict.items():
                 if k != "epi_rew_vec":
-                    tag = f"mean-stat-{_len}-{k}"
-                    y = np.mean(extract_values(self.stat_q, k))
+                    tag = f"stat-{k}"
+                    y = np.mean(v)
                     self.writer.add_scalar(tag, y, self.idx)
-                    
-            _mean_rew_vec = np.mean(extract_values(self.stat_q, "epi_rew_vec"), axis=(0, 1))
-            
+
+            _mean_rew_vec = np.mean(self.stat_q["epi_rew_vec"], axis=0)
             for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
-                tag = f"mean-weighted-reward-{r_param}"
-                weighted_reward = _mean_rew_vec[rdx] * weight
-                self.writer.add_scalar(tag, weighted_reward, self.idx)
+                tag = f"mean-reward-{r_param}"
+                _reward = _mean_rew_vec[rdx]
+                self.writer.add_scalar(tag, _reward, self.idx)
                 
     # @staticmethod
     # def copy_to_ndarray(src):
@@ -209,10 +204,13 @@ class LearnerBase(SMInterface):
         while not self.stop_event.is_set():
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             assert protocol is Protocol.Stat
-            if len(self.stat_q) == self.stat_q.maxlen:
-                self.stat_q.popleft()  # FIFO
-            self.stat_q.append(data)
 
+            if self.stat_q.full():
+                print("stat_q is full, consuming an item before putting new one")
+                await self.stat_q.get()
+                
+            await self.stat_q.put(data)
+            print("stat-data is received !")
             await asyncio.sleep(0.001)
 
     async def put_batch_to_batch_q(self):
@@ -227,6 +225,7 @@ class LearnerBase(SMInterface):
 
     async def learning_chain_ppo(self):
         self.batch_queue = asyncio.Queue(1024)
+        self.stat_q = asyncio.Queue(128)
         tasks = [
             asyncio.create_task(self.learning_ppo()),
             asyncio.create_task(self.sub_stat_data()),
@@ -236,6 +235,7 @@ class LearnerBase(SMInterface):
 
     async def learning_chain_impala(self):
         self.batch_queue = asyncio.Queue(1024)
+        self.stat_q = asyncio.Queue(128)
         tasks = [
             asyncio.create_task(self.learning_impala()),
             asyncio.create_task(self.sub_stat_data()),

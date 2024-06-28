@@ -32,7 +32,7 @@ from . import (
     ppo_awrapper,
     impala_awrapper,
 )
-from rewarder.rewarder import REWARD_PARAM
+# from rewarder.rewarder import REWARD_PARAM
 
 timer = ExecutionTimer(
     num_transition=Params.seq_len * Params.batch_size * 1
@@ -153,22 +153,20 @@ class LearnerBase(SMInterface):
 
         if len(self.stat_q) >= self.stat_q.maxlen:
             sample_stat_dict = self.stat_q[-1]
-            stat_keys = list(sample_stat_dict.keys())
-            
-            _len = len(self.stat_q)
-            
-            for k in stat_keys:
-                if k != "epi_rew_vec":
-                    tag = f"mean-stat-{_len}-{k}"
-                    y = np.mean(extract_values(self.stat_q, k))
-                    self.writer.add_scalar(tag, y, self.idx)
+            # stat_keys = list(sample_stat_dict.keys())
+
+            for k, v in sample_stat_dict.items():
+                # if k != "epi_rew_vec":
+                tag = f"stat-{k}"
+                y = np.mean(v)
+                self.writer.add_scalar(tag, y, self.idx)
                     
-            _mean_rew_vec = np.mean(extract_values(self.stat_q, "epi_rew_vec"), axis=(0, 1))
+            # _mean_rew_vec = np.mean(extract_values(self.stat_q, "epi_rew_vec"), axis=(0, 1))
             
-            for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
-                tag = f"mean-weighted-reward-{r_param}"
-                weighted_reward = _mean_rew_vec[rdx] * weight
-                self.writer.add_scalar(tag, weighted_reward, self.idx)
+            # for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
+            #     tag = f"mean-weighted-reward-{r_param}"
+            #     weighted_reward = _mean_rew_vec[rdx] * weight
+            #     self.writer.add_scalar(tag, weighted_reward, self.idx)
                 
     # @staticmethod
     # def copy_to_ndarray(src):

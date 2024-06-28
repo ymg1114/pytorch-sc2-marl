@@ -7,6 +7,7 @@ import platform
 import psutil
 import pickle
 import blosc2
+import subprocess
 import numpy as np
 
 from functools import reduce
@@ -106,18 +107,33 @@ def make_gpu_batch(*args, device):
     return tuple(map(to_gpu, args))
 
 
-def select_least_used_gpu():
-    # GPU 사용 가능한지 확인
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is not available")
 
-    # 각 GPU의 메모리 사용량 확인
-    gpus_info = [(torch.cuda.memory_reserved(i), i) for i in range(torch.cuda.device_count())]
-    
-    # 메모리 사용량이 가장 적은 GPU 선택
-    _, best_gpu_idx = min(gpus_info)
-    
-    return best_gpu_idx
+def get_gpu_memory_info():
+    # nvidia-smi 명령어를 실행하여 출력 값을 받아옴
+    result = subprocess.run(['nvidia-smi', '--query-gpu=memory.total,memory.used,memory.free', '--format=csv,nounits,noheader'], stdout=subprocess.PIPE)
+    output = result.stdout.decode('utf-8').strip()
+
+    # 각 줄을 파싱하여 메모리 정보 추출
+    gpu_info = output.split('\n')
+    gpu_memory_info = []
+    for i, info in enumerate(gpu_info):
+        total, used, free = map(int, info.split(', '))
+        gpu_memory_info.append({
+            'GPU': i,
+            'Total Memory (MiB)': total,
+            'Used Memory (MiB)': used,
+            'Free Memory (MiB)': free
+        })
+
+    return gpu_memory_info
+
+def select_least_used_gpu():
+    # GPU 메모리 정보를 가져옴
+    gpu_memory_info = get_gpu_memory_info()
+
+    # 가장 Free Memory (MiB)가 높은 GPU 선택
+    best_gpu = max(gpu_memory_info, key=lambda x: x['Free Memory (MiB)'])
+    return best_gpu['GPU']
 
 
 def get_current_process_id():

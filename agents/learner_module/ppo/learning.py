@@ -107,7 +107,8 @@ async def learning(parent, timer: ExecutionTimer):
                             )
                             parent.optimizer.step()
 
-                parent.pub_model(parent.model.state_dict())
+                # CPU 텐서로 변환 후 전송
+                parent.pub_model({k: v.cpu() for k, v in parent.model.state_dict().items()})
 
                 if parent.idx % parent.args.loss_log_interval == 0:
                     await parent.log_loss_tensorboard(timer, loss, detached_losses)

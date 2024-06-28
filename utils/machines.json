@@ -1,22 +1,26 @@
 {
     "learner": {
+        "account": "...",
         "ip": "...",
         "port": 47165
     },
     "workers": [
         {
+            "account": "...",
             "num_p": 10,
             "manager_ip": "...",
             "ip": "...",
             "port": 27165
         },
         {
+            "account": "...",
             "num_p": 10,
             "manager_ip": "...",
             "ip": "...",
             "port": 27166
         },
         {
+            "account": "...",
             "num_p": 10,
             "manager_ip": "...",
             "ip": "...",

@@ -159,7 +159,7 @@ class LearnerBase(SMInterface):
                     y = np.mean(v)
                     self.writer.add_scalar(tag, y, self.idx)
 
-            _mean_rew_vec = np.mean(self.stat_q["epi_rew_vec"], axis=0)
+            _mean_rew_vec = np.mean(stat_dict["epi_rew_vec"], axis=0)
             for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
                 tag = f"mean-reward-{r_param}"
                 _reward = _mean_rew_vec[rdx]

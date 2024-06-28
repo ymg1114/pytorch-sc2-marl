@@ -361,24 +361,23 @@ class Runner:
         ):  # manager는 관리할 자식 프로세스가 없기 때문.
             assert func_name in ("worker_sub_process", "learner_sub_process")
 
-            # 자식 프로세스 종료 함수
-            def terminate_processes(processes):
-                for p in processes:
-                    if p.is_alive():
-                        p.terminate()
-                        p.join()
+            # # 자식 프로세스 종료 함수
+            # def terminate_processes(processes):
+            #     for p in processes:
+            #         if p.is_alive():
+            #             p.terminate()
+            #             p.join()
 
-            # 종료 시그널 핸들러 설정
-            def signal_handler(signum, frame):
-                print("Signal received, terminating processes")
-                terminate_processes(child_process)
+            # # 종료 시그널 핸들러 설정
+            # def signal_handler(signum, frame):
+            #     print("Signal received, terminating processes")
+            #     terminate_processes(child_process)
 
-            signal.signal(signal.SIGINT, signal_handler)
-            signal.signal(signal.SIGTERM, signal_handler)
+            # signal.signal(signal.SIGINT, signal_handler)
+            # signal.signal(signal.SIGTERM, signal_handler)
 
-            # 프로세스 종료 시 실행될 함수 등록
-            atexit.register(terminate_processes, child_process)
-
+            # # 프로세스 종료 시 실행될 함수 등록
+            # atexit.register(terminate_processes, child_process)
         try:
             if func_name in fn_dict:
                 fn_dict[func_name](self, *func_args)

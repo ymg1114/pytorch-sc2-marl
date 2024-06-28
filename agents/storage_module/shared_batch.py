@@ -26,9 +26,7 @@ def setup_shared_memory(env_space):
     initialize_shared_memory(shm_ref, env_space["info"])
 
     # 공유메모리 저장 인덱스
-    sh_data_num = mp.Value("i", 0) # 0 값 인덱스로 초기화
-    shm_ref["batch_index"] = sh_data_num
-
+    shm_ref["batch_index"] = mp.Value("i", 0, lock=True) # 0 값 인덱스로 초기화
     return shm_ref
 
 
@@ -37,7 +35,7 @@ class SMInterface:
         self.shm_ref = shm_ref
         self.env_space = env_space
         self.shared_memory_spaces = list(env_space.keys()) # ["obs", "act", "rew", "info"]
-        self.sh_data_num = self.shm_ref.get("batch_index")
+        self.sh_data_num: mp.Value = self.shm_ref.get("batch_index")
         
     def shm_ndarray_interface(self, name: str):
         assert name in self.shm_ref, f"{name} not found in shared memory reference"
@@ -57,4 +55,5 @@ class SMInterface:
         self.reset_data_num() # 공유메모리 저장 인덱스 (batch_num) 초기화
 
     def reset_data_num(self):
-        self.sh_data_num.value = 0
+        with self.sh_data_num.get_lock(): # 락을 사용해 동기화
+            self.sh_data_num.value = 0

@@ -82,16 +82,19 @@ class LearnerStorage(SMInterface):
 
             # with timer.timer("learner-storage-throughput", check_throughput=True):
             trajectory = await self.rollout_assembler.pop()
-            self.make_batch(trajectory)
+            with self.mutex.lock():
+                self.make_batch(trajectory)
             print("trajectory is poped !")
 
             await asyncio.sleep(0.001)
 
     def make_batch(self, trajectory):
         Bat = self.args.batch_size
-        N = self.sh_data_num.value
-
-        if N < Bat:
+        Shn = self.sh_data_num
+        
+        if Shn.value < Bat:
+            N = Shn.value
+            
             def _acquire(key, value):
                 assert hasattr(self, f"sh_{key}")
                 assert key in trajectory
@@ -104,6 +107,10 @@ class LearnerStorage(SMInterface):
                 return flatten(_T)
 
             def _update_shared_memory(space):
+                """공유 메모리에 쓰기 작업 수행. Lock을 도입해
+                데이터 무결성 확보
+                """
+                
                 for k, v in space.items():
                     B, S, D = v.nvec # Batch, Sequence, Dim
                     getattr(self, f"sh_{k}")[S*N*D: S*(N+1)*D] = _acquire(k, v)
@@ -112,5 +119,6 @@ class LearnerStorage(SMInterface):
             _update_shared_memory(self.env_space["act"])
             _update_shared_memory(self.env_space["rew"])
             _update_shared_memory(self.env_space["info"])
-
-            self.sh_data_num.value += 1
+            
+            with Shn.get_lock(): 
+                Shn.value += 1

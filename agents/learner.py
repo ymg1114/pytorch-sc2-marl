@@ -202,8 +202,8 @@ class LearnerBase(SMInterface):
 
     def is_sh_ready(self):
         Bat = self.args.batch_size
-        N = self.sh_data_num.value
-        return True if N >= Bat else False
+        Shn = self.sh_data_num
+        return True if Shn.value >= Bat else False
 
     async def sub_stat_data(self):
         while not self.stop_event.is_set():

@@ -161,7 +161,7 @@ class Runner:
         asyncio.run(storage.shared_memory_chain())
 
     @staticmethod
-    def run_learner(
+    def learner_run(
         learner_model,
         learner_cls,
         args,
@@ -306,7 +306,7 @@ class Runner:
             heartbeat = mp.Value("f", time.time())
 
             src_l = {
-                "target": Runner.run_learner,
+                "target": Runner.learner_run,
                 "args": (
                     self.Model,
                     self.LearnerCls,

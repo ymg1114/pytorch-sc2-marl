@@ -1,6 +1,5 @@
 from contextlib import contextmanager
 
-import queue
 import torch.multiprocessing as mp
 
 
@@ -18,16 +17,6 @@ class Lock:
             self._lock.release()
         return
 
-    def get(self, q: mp.Queue):
-        with self.lock():
-            data = q.get()
-        return data
-
-    def put(self, q: mp.Queue, data):
-        with self.lock():
-            q.put(data)
-        return
-
 
 class Mutex:
     def __init__(self):
@@ -41,23 +30,4 @@ class Mutex:
             yield
         finally:
             self._mutex.release()
-        return
-
-    def get(self, q: mp.Queue):
-        with self.lock():
-            data = q.get()
-        return data
-
-    def get_with_timeout(self, q: mp.Queue, timeout=1.0):
-        with self.lock():
-            try:
-                data = q.get(timeout=timeout)  # timeout초 동안 대기
-            except queue.Empty:
-                data = None
-                print(f"Queue is empty after waiting for {timeout} seconds")
-        return data
-
-    def put(self, q: mp.Queue, data):
-        with self.lock():
-            q.put(data)
         return

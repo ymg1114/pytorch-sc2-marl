@@ -62,12 +62,12 @@ class LearnerStorage(SMInterface):
         self.rollout_assembler = RolloutAssembler(self.args, asyncio.Queue(1024))
 
         tasks = [
-            asyncio.create_task(self.retrieve_rollout_from_worker()),
+            asyncio.create_task(self.retrieve_rollout_from_manager()),
             asyncio.create_task(self.build_as_batch()),
         ]
         await asyncio.gather(*tasks)
 
-    async def retrieve_rollout_from_worker(self):
+    async def retrieve_rollout_from_manager(self):
         while not self.stop_event.is_set():
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             assert protocol is Protocol.Rollout

@@ -54,12 +54,29 @@ def check_agent_id(agents, n_agents, agent_tag, is_full):
 
 class Worker:
     def __init__(
-        self, args, model, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, heartbeat=None
+        self,
+        args,
+        model_cls,
+        worker_name,
+        stop_event,
+        manager_ip,
+        learner_ip,
+        port,
+        learner_port,
+        env_space,
+        heartbeat=None
     ):
         self.args = args
         self.device = args.device  # cpu
+        self.env_space = env_space
+        
+        # 서로 다른 worker 인스턴스들이 다른 weight로 초기화되나, learner에서 최초 1회 학습 후 
+        # identical 한 weight를 얻으므로, 이 정도는 감수
+        self.model: "ModelSingle" = model_cls(self.args, self.env_space).to("cpu").eval()
+        out_dict  = model_cls.set_model_weight(self.args)
+        if out_dict is not None:
+            self.model.load_state_dict(out_dict["state_dict"])
 
-        self.model: "ModelSingle" = model.to(torch.device("cpu")).eval()
         self.worker_name = worker_name
         self.stop_event = stop_event
         self.heartbeat = heartbeat
@@ -194,7 +211,7 @@ class Worker:
                 await asyncio.sleep(0.15)
 
                 if self.heartbeat is not None:
-                    self.heartbeat.value = time.time()
+                    self.heartbeat.value = time.monotonic()
 
                 if terminated:
                     # if not info.get("battle_won", True):

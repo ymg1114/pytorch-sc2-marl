@@ -11,7 +11,6 @@ from ..compute_loss import compute_v_trace, cal_hier_log_probs
 
 async def learning(parent, timer: ExecutionTimer):
     assert hasattr(parent, "batch_queue")
-    parent.idx = 0
 
     while not parent.stop_event.is_set():
         batch_dict = None
@@ -103,7 +102,10 @@ async def learning(parent, timer: ExecutionTimer):
 
                 if parent.idx % parent.args.model_save_interval == 0:
                     torch.save(
-                        parent.model,
+                        {
+                            "model_state": parent.model.state_dict(),
+                            "log_idx": parent.idx
+                        },           
                         os.path.join(
                             parent.args.model_dir, f"{parent.args.algo}_{parent.idx}.pt"
                         ),
@@ -112,6 +114,6 @@ async def learning(parent, timer: ExecutionTimer):
                 parent.idx += 1
 
             if parent.heartbeat is not None:
-                parent.heartbeat.value = time.time()
+                parent.heartbeat.value = time.monotonic()
 
         await asyncio.sleep(0.001)

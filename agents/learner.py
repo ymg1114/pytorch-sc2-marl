@@ -10,7 +10,7 @@ import asyncio
 import numpy as np
 from collections import defaultdict, deque
 from torch.distributions import Categorical, Uniform
-from functools import partial
+# from functools import partial
 
 import zmq.asyncio
 
@@ -23,7 +23,7 @@ from utils.utils import (
     ExecutionTimer,
     Params,
     to_torch,
-    extract_values,
+    # extract_values,
 )
 from torch.optim import Adam, RMSprop
 
@@ -33,6 +33,12 @@ from . import (
     impala_awrapper,
 )
 from rewarder.rewarder import REWARD_PARAM
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from networks.network import ModelSingle
+
 
 timer = ExecutionTimer(
     num_transition=Params.seq_len * Params.batch_size * 1
@@ -44,7 +50,7 @@ class LearnerBase(SMInterface):
         self,
         args,
         mutex,
-        model,
+        model_cls,
         shm_ref,
         stop_event,
         learner_ip,
@@ -61,8 +67,12 @@ class LearnerBase(SMInterface):
         self.heartbeat = heartbeat
         
         self.device = self.args.device
-        self.model = model.to(self.device)
 
+        self.model: "ModelSingle" = model_cls(self.args, self.env_space).to(self.device)
+        state_dict = model_cls.set_model_weight(self.args, self.device)
+        if state_dict is not None:
+            self.model.load_state_dict(state_dict)
+            
         # self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
         self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr, eps=1e-5)
         self.CT = Categorical
@@ -72,8 +82,8 @@ class LearnerBase(SMInterface):
         self.get_shared_memory_interface()
         from tensorboardX import SummaryWriter
 
-        self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
-
+        self.writer = SummaryWriter(log_dir=args.result_dir, append=True)  # tensorboard-log
+        
     def __del__(self):  # 소멸자
         if hasattr(self, "pub_socket"):
             self.pub_socket.close()

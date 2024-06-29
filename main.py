@@ -97,30 +97,8 @@ class Runner:
         )
 
         self.LearnerCls = module_name_space.learner_cls
-
-        self.Model = module_name_space.model_cls(self.args, self.env_space)
-        self.Model.to(torch.device("cpu"))  # cpu 모델
-
-    def set_model_weight(self, model_dir):
-        model_files = list(Path(model_dir).glob(f"{self.args.algo}_*.pt"))
-
-        prev_model_weight = None
-        if len(model_files) > 0:
-            sorted_files = sorted(model_files, key=extract_file_num)
-            if sorted_files:
-                prev_model_weight = torch.load(
-                    sorted_files[-1],
-                    map_location=torch.device("cpu"),  # 가장 최신 학습 모델 로드
-                )
-
-        learner_model_state_dict = self.Model.cpu().state_dict()
-        if prev_model_weight is not None:
-            learner_model_state_dict = {
-                k: v.cpu() for k, v in prev_model_weight.state_dict().items()
-            }
-
-        return learner_model_state_dict  # cpu 텐서
-
+        self.ModelCls = module_name_space.model_cls
+    
     @staticmethod
     def extract_err(target_dir: str):
         log_dir = os.path.join(os.getcwd(), "logs", target_dir)
@@ -130,10 +108,10 @@ class Runner:
 
     @staticmethod
     def worker_run(
-        model, worker_name, stop_event, args, manager_ip, learner_ip, port, learner_port, heartbeat=None
+        model_cls, worker_name, stop_event, args, manager_ip, learner_ip, port, learner_port, env_space, heartbeat=None
     ):
         worker = Worker(
-            args, model, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, heartbeat
+            args, model_cls, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, env_space, heartbeat
         )
         asyncio.run(worker.life_cycle_chain())  # collect rollout
 
@@ -162,7 +140,7 @@ class Runner:
 
     @staticmethod
     def learner_run(
-        learner_model,
+        model_cls,
         learner_cls,
         args,
         mutex,
@@ -176,7 +154,7 @@ class Runner:
         learner = learner_cls(
             args,
             mutex,
-            learner_model,
+            model_cls,
             shm_ref,
             stop_event,
             learner_ip,
@@ -212,20 +190,15 @@ class Runner:
     @register
     def worker_sub_process(self, num_p, manager_ip, learner_ip, port, learner_port):
         try:
-            learner_model_state_dict = self.set_model_weight(self.args.model_dir)
-
             for i in range(int(num_p)):
                 print("Build Worker {:d}".format(i))
-                worker_model = copy.deepcopy(self.Model)
-                worker_model.load_state_dict(learner_model_state_dict)
                 worker_name = "worker_" + str(i)
-
                 heartbeat = mp.Value("f", time.time())
 
                 src_w = {
                     "target": Runner.worker_run,
                     "args": (
-                        worker_model,
+                        self.ModelCls,
                         worker_name,
                         self.stop_event,
                         self.args,
@@ -233,10 +206,10 @@ class Runner:
                         learner_ip,
                         port,
                         learner_port,
+                        self.env_space,
                     ),
                     "kwargs": {"heartbeat": heartbeat},
                     "heartbeat": heartbeat,
-                    "is_model_reload": True,
                 }
 
                 w = Process(
@@ -268,9 +241,6 @@ class Runner:
     @register
     def learner_sub_process(self, learner_ip, learner_port):
         try:
-            learner_model_state_dict = self.set_model_weight(self.args.model_dir)
-            self.Model.load_state_dict(learner_model_state_dict)
-
             mutex = Mutex()
 
             # 학습을 위한 공유메모리 확보
@@ -308,7 +278,7 @@ class Runner:
             src_l = {
                 "target": Runner.learner_run,
                 "args": (
-                    self.Model,
+                    self.ModelCls,
                     self.LearnerCls,
                     self.args,
                     mutex,
@@ -322,7 +292,6 @@ class Runner:
                     "heartbeat": heartbeat,
                 },
                 "heartbeat": heartbeat,
-                "is_model_reload": True,
             }
 
             l = Process(

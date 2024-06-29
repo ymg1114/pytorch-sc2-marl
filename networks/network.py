@@ -64,6 +64,26 @@ class ModelSingle(nn.Module):
         self.logit_move = nn.Linear(self.hidden_size, self.logit_move_shape[-1])
         self.logit_target = nn.Linear(self.hidden_size, self.logit_target_shape[-1])
 
+    @staticmethod
+    def set_model_weight(args, device="cpu"):
+        model_files = list(Path(args.model_dir).glob(f"{args.algo}_*.pt"))
+
+        prev_model_weight = None
+        if len(model_files) > 0:
+            sorted_files = sorted(model_files, key=extract_file_num)
+            if sorted_files:
+                prev_model_weight = torch.load(
+                    sorted_files[-1],
+                    map_location=torch.device("cpu"),  # 가장 최신 학습 모델 cpu 텐서로 로드
+                )
+
+        if prev_model_weight is not None:
+            model_state_dict = {
+                k: v.to(device) for k, v in prev_model_weight.state_dict().items()
+            }
+            return model_state_dict
+        return
+
     def dim_set(self, env_space):
         self.env_space = env_space
         

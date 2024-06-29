@@ -71,15 +71,14 @@ class LearnerStorage(SMInterface):
         while not self.stop_event.is_set():
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             assert protocol is Protocol.Rollout
+            if self.heartbeat is not None:
+                self.heartbeat.value = time.monotonic()
             
             await self.rollout_assembler.push(data)
             await asyncio.sleep(0.001)
 
     async def build_as_batch(self):
         while not self.stop_event.is_set():
-            if self.heartbeat is not None:
-                self.heartbeat.value = time.time()
-
             # with timer.timer("learner-storage-throughput", check_throughput=True):
             trajectory = await self.rollout_assembler.pop()
             with self.mutex.lock():

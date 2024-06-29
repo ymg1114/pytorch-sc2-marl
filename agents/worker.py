@@ -210,7 +210,7 @@ class Worker:
                 await asyncio.sleep(0.15)
 
                 if self.heartbeat is not None:
-                    self.heartbeat.value = time.time()
+                    self.heartbeat.value = time.monotonic()
 
                 if terminated:
                     # if not info.get("battle_won", True):

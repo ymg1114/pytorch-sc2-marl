@@ -126,6 +126,6 @@ async def learning(parent, timer: ExecutionTimer):
                 parent.idx += 1
 
             if parent.heartbeat is not None:
-                parent.heartbeat.value = time.time()
+                parent.heartbeat.value = time.monotonic()
 
         await asyncio.sleep(0.001)

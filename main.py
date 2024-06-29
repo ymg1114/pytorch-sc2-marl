@@ -1,9 +1,10 @@
 import os, sys
+# import io
 import signal
-import atexit
+# import atexit
 import time
 # import gymnasium as gym
-import copy
+# import copy
 
 import torch
 import traceback
@@ -13,7 +14,7 @@ import multiprocessing as mp
 from types import SimpleNamespace as SN
 from pathlib import Path
 from multiprocessing import Process
-from datetime import datetime
+# from datetime import datetime
 
 from agents.storage_module.shared_batch import (
     setup_shared_memory,
@@ -38,7 +39,6 @@ from utils.utils import (
     SC2Config,
     result_dir,
     model_dir,
-    extract_file_num,
     ErrorComment,
     select_least_used_gpu,
 )
@@ -46,7 +46,8 @@ from utils.lock import Mutex
 
 
 fn_dict = {}
-child_process = {}
+child_process = {} # 전역 변수로 child_process 관리
+terminate_flag = False
 
 
 def register(fn):
@@ -173,197 +174,209 @@ class Runner:
 
     @register
     def manager_sub_process(self, manager_ip, learner_ip, port, learner_port):
-        try:
-            manager = Manager(
-                self.args, self.stop_event, manager_ip, learner_ip, port, learner_port
-            )
-            asyncio.run(manager.data_chain())
-        except:
-            # 자식 프로세스 종료 신호 보냄
-            self.stop_event.set()
-
-            traceback.print_exc(limit=128)
-
-            err, log_dir = Runner.extract_err("manager")
-            SaveErrorLog(err, log_dir)
+        manager = Manager(
+            self.args, self.stop_event, manager_ip, learner_ip, port, learner_port
+        )
+        asyncio.run(manager.data_chain())
 
     @register
     def worker_sub_process(self, num_p, manager_ip, learner_ip, port, learner_port):
-        try:
-            for i in range(int(num_p)):
-                print("Build Worker {:d}".format(i))
-                worker_name = "worker_" + str(i)
-                
-                heartbeat = mp.Value("f", time.time())
+        for i in range(int(num_p)):
+            print("Build Worker {:d}".format(i))
+            worker_name = "worker_" + str(i)
+            
+            heartbeat = mp.Value("f", time.monotonic())
 
-                src_w = {
-                    "target": Runner.worker_run,
-                    "args": (
-                        self.ModelCls,
-                        worker_name,
-                        self.stop_event,
-                        self.args,
-                        manager_ip, 
-                        learner_ip,
-                        port,
-                        learner_port,
-                        self.env_space,
-                    ),
-                    "kwargs": {"heartbeat": heartbeat},
-                }
+            src_w = {
+                "target": Runner.worker_run,
+                "args": (
+                    self.ModelCls,
+                    worker_name,
+                    self.stop_event,
+                    self.args,
+                    manager_ip, 
+                    learner_ip,
+                    port,
+                    learner_port,
+                    self.env_space,
+                ),
+                "kwargs": {"heartbeat": heartbeat},
+            }
 
-                w = Process(
-                    target=src_w.get("target"),
-                    args=src_w.get("args"),
-                    kwargs=src_w.get("kwargs"),
-                    daemon=True,
-                )  # child-processes
-                child_process.update({w: src_w})
+            w = Process(
+                target=src_w.get("target"),
+                args=src_w.get("args"),
+                kwargs=src_w.get("kwargs"),
+                daemon=True,
+            )  # child-processes
+            child_process.update({w: src_w})
 
-            for wp in child_process:
-                wp.start()
+        for wp in child_process:
+            wp.start()
 
-            for wp in child_process:
-                wp.join()
-
-        except:
-            # 자식 프로세스 종료 신호 보냄
-            self.stop_event.set()
-
-            traceback.print_exc(limit=128)
-
-            err, log_dir = Runner.extract_err("worker")
-            SaveErrorLog(err, log_dir)
-
-            for wp in child_process:
-                wp.terminate()
+        # for wp in child_process:
+        #     wp.join()
 
     @register
     def learner_sub_process(self, learner_ip, learner_port):
-        try:
-            mutex = Mutex()
+        mutex = Mutex()
 
-            # 학습을 위한 공유메모리 확보
-            shm_ref = setup_shared_memory(self.env_space)
+        # 학습을 위한 공유메모리 확보
+        shm_ref = setup_shared_memory(self.env_space)
 
-            heartbeat = mp.Value("f", time.time())
+        heartbeat = mp.Value("f", time.monotonic())
 
-            src_s = {
-                "target": Runner.storage_run,
-                "args": (
-                    self.args,
-                    mutex,
-                    shm_ref,
-                    self.stop_event,
-                    learner_ip,
-                    learner_port,
-                    self.env_space,
-                ),
-                "kwargs": {
-                    "heartbeat": heartbeat,
-                },
-            }
+        src_s = {
+            "target": Runner.storage_run,
+            "args": (
+                self.args,
+                mutex,
+                shm_ref,
+                self.stop_event,
+                learner_ip,
+                learner_port,
+                self.env_space,
+            ),
+            "kwargs": {
+                "heartbeat": heartbeat,
+            },
+        }
 
-            s = Process(
-                target=src_s.get("target"),
-                args=src_s.get("args"),
-                kwargs=src_s.get("kwargs"),
-                daemon=True,
-            )  # child-processes
-            child_process.update({s: src_s})
+        s = Process(
+            target=src_s.get("target"),
+            args=src_s.get("args"),
+            kwargs=src_s.get("kwargs"),
+            daemon=True,
+        )  # child-processes
+        child_process.update({s: src_s})
 
-            heartbeat = mp.Value("f", time.time())
+        heartbeat = mp.Value("f", time.monotonic())
 
-            src_l = {
-                "target": Runner.learner_run,
-                "args": (
-                    self.ModelCls,
-                    self.LearnerCls,
-                    self.args,
-                    mutex,
-                    shm_ref,
-                    self.stop_event,
-                    learner_ip,
-                    learner_port,
-                    self.env_space,
-                ),
-                "kwargs": {
-                    "heartbeat": heartbeat,
-                },
-            }
+        src_l = {
+            "target": Runner.learner_run,
+            "args": (
+                self.ModelCls,
+                self.LearnerCls,
+                self.args,
+                mutex,
+                shm_ref,
+                self.stop_event,
+                learner_ip,
+                learner_port,
+                self.env_space,
+            ),
+            "kwargs": {
+                "heartbeat": heartbeat,
+            },
+        }
 
-            l = Process(
-                target=src_l.get("target"),
-                args=src_l.get("args"),
-                kwargs=src_l.get("kwargs"),
-                daemon=True,
-            )  # child-processes
-            child_process.update({l: src_l})
+        l = Process(
+            target=src_l.get("target"),
+            args=src_l.get("args"),
+            kwargs=src_l.get("kwargs"),
+            daemon=True,
+        )  # child-processes
+        child_process.update({l: src_l})
 
-            for lp in child_process:
-                lp.start()
+        for lp in child_process:
+            lp.start()
 
-            for lp in child_process:
-                lp.join()
-
-        except:
-            # 자식 프로세스 종료 신호 보냄
-            self.stop_event.set()
-
-            traceback.print_exc(limit=128)
-
-            err, log_dir = Runner.extract_err("learner")
-            SaveErrorLog(err, log_dir)
-
-            for lp in child_process:
-                lp.terminate()
+        # for lp in child_process:
+        #     lp.join()
 
     def start(self):
+        def _monitor_child_process(restart_delay=30):
+            def _restart_process(src, heartbeat):
+                traceback.print_exc(limit=128)
+
+                err, log_dir = Runner.extract_err(func_name)
+                SaveErrorLog(err, log_dir)
+                
+                # heartbeat 기록 갱신
+                heartbeat.value = time.monotonic()
+
+                new_p = Process(
+                    target=src.get("target"),
+                    args=src.get("args"),
+                    kwargs=src.get("kwargs"),
+                    daemon=True,
+                )  # child-processes
+                new_p.start()
+                
+                child_process.update({new_p: src})
+
+            def _signal_handler(signum, frame):
+                global terminate_flag
+                terminate_flag = True
+                # 자식 프로세스 종료 신호 보냄
+                self.stop_event.set()
+                for p in list(child_process.keys()):
+                    p.terminate()
+                    p.join()
+                sys.exit(0)
+
+            # SIGINT 시그널 핸들러 등록 (ctrl + c 감지)
+            signal.signal(signal.SIGINT, _signal_handler)
+
+            while not terminate_flag:
+                for p in list(child_process.keys()):
+                    src = child_process.get(p)
+ 
+                    heartbeat = src["kwargs"].get("heartbeat")
+                    assert heartbeat is not None
+
+                    # 자식 프로세스가 죽었거나, 일정 시간 이상 통신이 안된 경우 -> 재시작
+                    if not p.is_alive() or (
+                        (time.monotonic() - heartbeat.value) > restart_delay
+                    ):
+                        # 해당 자식 프로세스 종료
+                        p.terminate()
+                        p.join()
+                        child_process.pop(p)
+                        assert not p.is_alive(), f"p: {p}"
+
+                        # 해당 자식 프로세스 신규 생성 및 시작
+                        _restart_process(src, heartbeat)
+
+                time.sleep(1.0)
+        
         assert len(sys.argv) >= 1
         func_name = sys.argv[1]
         func_args = sys.argv[2:]
         
-        if (
-            func_name != "manager_sub_process"
-        ):  # manager는 관리할 자식 프로세스가 없기 때문.
-            assert func_name in ("worker_sub_process", "learner_sub_process")
+        assert func_name in ("worker_sub_process", "manager_sub_process", "learner_sub_process")
+        
+        # # 자식 프로세스 종료 함수
+        # def terminate_processes(processes):
+        #     for p in processes:
+        #         if p.is_alive():
+        #             p.terminate()
+        #             p.join()
 
-            # # 자식 프로세스 종료 함수
-            # def terminate_processes(processes):
-            #     for p in processes:
-            #         if p.is_alive():
-            #             p.terminate()
-            #             p.join()
+        # # 종료 시그널 핸들러 설정
+        # def signal_handler(signum, frame):
+        #     print("Signal received, terminating processes")
+        #     terminate_processes(child_process)
 
-            # # 종료 시그널 핸들러 설정
-            # def signal_handler(signum, frame):
-            #     print("Signal received, terminating processes")
-            #     terminate_processes(child_process)
+        # signal.signal(signal.SIGINT, signal_handler)
+        # signal.signal(signal.SIGTERM, signal_handler)
 
-            # signal.signal(signal.SIGINT, signal_handler)
-            # signal.signal(signal.SIGTERM, signal_handler)
-
-            # # 프로세스 종료 시 실행될 함수 등록
-            # atexit.register(terminate_processes, child_process)
+        # # 프로세스 종료 시 실행될 함수 등록
+        # atexit.register(terminate_processes, child_process)
+        
         try:
             if func_name in fn_dict:
                 fn_dict[func_name](self, *func_args)
             else:
                 assert False, f"Wronf func_name: {func_name}, func_args: {func_args}"
-
-        except Exception as e:
-            # 자식 프로세스 종료 신호 보냄
-            self.stop_event.set()
-
-            print(f"error: {e}")
+            _monitor_child_process()
+            
+        finally:
             traceback.print_exc(limit=128)
 
-            for p in child_process:
-                if p.is_alive():
-                    p.terminate()
-                    p.join()
-
-        finally:
+            err, log_dir = Runner.extract_err(func_name)
+            SaveErrorLog(err, log_dir)
+            
             KillProcesses(os.getpid())
 
 

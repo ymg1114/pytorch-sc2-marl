@@ -1,7 +1,6 @@
 import os
 import zmq
 # import time
-# import torch
 # import torch.nn.functional as F
 import asyncio
 
@@ -67,11 +66,13 @@ class LearnerBase(SMInterface):
         self.heartbeat = heartbeat
         
         self.device = self.args.device
-
+        self.idx = 0
+        
         self.model: "ModelSingle" = model_cls(self.args, self.env_space).to(self.device)
-        state_dict = model_cls.set_model_weight(self.args, self.device)
-        if state_dict is not None:
-            self.model.load_state_dict(state_dict)
+        out_dict = model_cls.set_model_weight(self.args, self.device)
+        if out_dict is not None:
+            self.model.load_state_dict(out_dict["state_dict"], self.device)
+            self.idx = out_dict["log_idx"]
             
         # self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
         self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr, eps=1e-5)
@@ -80,15 +81,17 @@ class LearnerBase(SMInterface):
         # self.to_gpu = partial(make_gpu_batch, device=self.device)
         self.zeromq_set(learner_ip, learner_port)
         self.get_shared_memory_interface()
-        from tensorboardX import SummaryWriter
-
-        self.writer = SummaryWriter(log_dir=args.result_dir, append=True)  # tensorboard-log
+        
+        from torch.utils.tensorboard import SummaryWriter
+        self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
         
     def __del__(self):  # 소멸자
         if hasattr(self, "pub_socket"):
             self.pub_socket.close()
         if hasattr(self, "sub_socket"):
             self.sub_socket.close()
+        if hasattr(self, "writer"):
+            self.writer.close()
             
     def zeromq_set(self, learner_ip, learner_port):
         acontext = zmq.asyncio.Context()

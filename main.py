@@ -193,6 +193,7 @@ class Runner:
             for i in range(int(num_p)):
                 print("Build Worker {:d}".format(i))
                 worker_name = "worker_" + str(i)
+                
                 heartbeat = mp.Value("f", time.time())
 
                 src_w = {
@@ -209,7 +210,6 @@ class Runner:
                         self.env_space,
                     ),
                     "kwargs": {"heartbeat": heartbeat},
-                    "heartbeat": heartbeat,
                 }
 
                 w = Process(
@@ -262,7 +262,6 @@ class Runner:
                 "kwargs": {
                     "heartbeat": heartbeat,
                 },
-                "heartbeat": heartbeat,
             }
 
             s = Process(
@@ -291,7 +290,6 @@ class Runner:
                 "kwargs": {
                     "heartbeat": heartbeat,
                 },
-                "heartbeat": heartbeat,
             }
 
             l = Process(

@@ -11,7 +11,6 @@ from ..compute_loss import compute_v_trace, rew_vec_to_scaled_scalar, cal_hier_l
 
 async def learning(parent, timer: ExecutionTimer):
     assert hasattr(parent, "batch_queue")
-    parent.idx = 0
 
     while not parent.stop_event.is_set():
         batch_dict = None
@@ -103,7 +102,10 @@ async def learning(parent, timer: ExecutionTimer):
 
                 if parent.idx % parent.args.model_save_interval == 0:
                     torch.save(
-                        parent.model,
+                        {
+                            "model_state": parent.model.state_dict(),
+                            "log_idx": parent.idx
+                        },           
                         os.path.join(
                             parent.args.model_dir, f"{parent.args.algo}_{parent.idx}.pt"
                         ),

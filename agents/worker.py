@@ -73,9 +73,9 @@ class Worker:
         # 서로 다른 worker 인스턴스들이 다른 weight로 초기화되나, learner에서 최초 1회 학습 후 
         # identical 한 weight를 얻으므로, 이 정도는 감수
         self.model: "ModelSingle" = model_cls(self.args, self.env_space).to("cpu").eval()
-        state_dict = model_cls.set_model_weight(self.args)
-        if state_dict is not None:
-            self.model.load_state_dict(state_dict)
+        out_dict  = model_cls.set_model_weight(self.args)
+        if out_dict is not None:
+            self.model.load_state_dict(out_dict["state_dict"])
 
         self.worker_name = worker_name
         self.stop_event = stop_event

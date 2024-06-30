@@ -71,7 +71,7 @@ class LearnerBase(SMInterface):
         self.model: "ModelSingle" = model_cls(self.args, self.env_space).to(self.device)
         out_dict = model_cls.set_model_weight(self.args, self.device)
         if out_dict is not None:
-            self.model.load_state_dict(out_dict["state_dict"], self.device)
+            self.model.load_state_dict(out_dict["state_dict"])
             self.idx = out_dict["log_idx"]
             
         # self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)

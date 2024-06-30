@@ -109,6 +109,15 @@ class Runner:
         return traceback.format_exc(limit=128), log_dir
 
     @staticmethod
+    def manager_run(
+        args, stop_event, manager_ip, learner_ip, port, learner_port, heartbeat=None
+    ):
+        manager = Manager(
+            args, stop_event, manager_ip, learner_ip, port, learner_port, heartbeat,
+        )
+        asyncio.run(manager.data_chain())
+
+    @staticmethod
     def worker_run(
         model_cls, worker_name, stop_event, args, manager_ip, learner_ip, port, learner_port, env_space, heartbeat=None
     ):
@@ -184,10 +193,30 @@ class Runner:
 
     @register
     def manager_sub_process(self, manager_ip, learner_ip, port, learner_port):
-        manager = Manager(
-            self.args, self.stop_event, manager_ip, learner_ip, port, learner_port
-        )
-        asyncio.run(manager.data_chain())
+        heartbeat = mp.Value("f", time.monotonic())
+        
+        src_m = {
+            "target": Runner.manager_run,
+            "args": (
+                self.args,
+                self.stop_event,
+                manager_ip, 
+                learner_ip,
+                port,
+                learner_port,
+            ),
+            "kwargs": {"heartbeat": heartbeat},
+        }
+        m = Process(
+            target=src_m.get("target"),
+            args=src_m.get("args"),
+            kwargs=src_m.get("kwargs"),
+            daemon=True,
+        )  # child-processes
+        child_process.update({m: src_m})
+
+        for _mp in child_process:
+            _mp.start()
 
     @register
     def worker_sub_process(self, num_p, manager_ip, learner_ip, port, learner_port):

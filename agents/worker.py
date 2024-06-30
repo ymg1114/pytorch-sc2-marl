@@ -87,8 +87,9 @@ class Worker:
             debug=True,
             conic_fov=False,
             obs_own_pos=True,
-            use_unit_ranges=True,
+            use_unit_ranges=False,
             min_attack_range=2,
+            fully_observable=True,
         )
 
         self.env_info = self.env.get_env_info()

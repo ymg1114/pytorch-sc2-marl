@@ -142,7 +142,7 @@ class WrapperSC2Env(StarCraft2Env):
             self._obs = self._controller.observe()
         except (protocol.ProtocolError, protocol.ConnectionError):
             self.full_restart()
-            return 0, True, {}
+            return np.zeros((len(REWARD_PARAM), len(self.agents)), dtype=np.float32), True, {}
 
         self._total_steps += 1
         self._episode_steps += 1

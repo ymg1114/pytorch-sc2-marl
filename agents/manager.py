@@ -1,6 +1,6 @@
 import zmq
 import zmq.asyncio
-
+import time
 import asyncio
 import numpy as np
 from collections import deque
@@ -9,10 +9,12 @@ from utils.utils import Protocol, encode, decode
 
 
 class Manager:
-    def __init__(self, args, stop_event, manager_ip, learner_ip, port, learner_port):
+    def __init__(self, args, stop_event, manager_ip, learner_ip, port, learner_port, heartbeat=None):
         self.args = args
         self.stop_event = stop_event
 
+        self.heartbeat = heartbeat
+        
         self.zeromq_set(manager_ip, learner_ip, port, learner_port)
 
     def __del__(self):  # 소멸자
@@ -44,6 +46,9 @@ class Manager:
         while not self.stop_event.is_set():
             protocol, data = await self.data_q.get()  # FIFO
             assert protocol is Protocol.Rollout
+
+            if self.heartbeat is not None:
+                self.heartbeat.value = time.monotonic()
 
             await self.pub_socket.send_multipart(
                 [*encode(Protocol.Rollout, data)]

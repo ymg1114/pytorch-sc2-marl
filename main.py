@@ -23,7 +23,7 @@ from agents.learner import (
     LearnerSinglePPO,
     LearnerSingleIMPALA,
 )
-from agents.worker import Worker
+from agents.worker import Worker, TestWorker
 from agents.learner_storage import LearnerStorage
 from agents.manager import Manager
 
@@ -115,6 +115,15 @@ class Runner:
             args, model_cls, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, env_space, heartbeat
         )
         asyncio.run(worker.life_cycle_chain())  # collect rollout
+
+    @staticmethod
+    def test_worker_run(
+        model_cls, worker_name, stop_event, args, manager_ip, learner_ip, port, learner_port, env_space, heartbeat=None
+    ):
+        test_worker = TestWorker(
+            args, model_cls, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, env_space, heartbeat
+        )
+        test_worker.render_test()
 
     @staticmethod
     def storage_run(
@@ -284,6 +293,27 @@ class Runner:
         # for lp in child_process:
         #     lp.join()
 
+    @register
+    def worker_test_process(self, num_p, manager_ip, learner_ip, port, learner_port):
+        """TestWorker를 (학습) Worker를 상속받아 구현.
+        num_p, manager_ip, learner_ip, port, learner_port는 불필요한 dummy args
+        """
+        
+        print("Build Test Worker")
+        worker_name = "test worker"
+        
+        Runner.test_worker_run(
+            self.ModelCls,
+            worker_name,
+            self.stop_event,
+            self.args,
+            manager_ip, 
+            learner_ip,
+            port,
+            learner_port,
+            self.env_space,
+        )
+
     def start(self):
         def _monitor_child_process(restart_delay=30):
             def _restart_process(src, heartbeat):
@@ -344,7 +374,7 @@ class Runner:
         func_name = sys.argv[1]
         func_args = sys.argv[2:]
         
-        assert func_name in ("worker_sub_process", "manager_sub_process", "learner_sub_process")
+        assert func_name in ("worker_sub_process", "manager_sub_process", "learner_sub_process", "worker_test_process")
         
         # # 자식 프로세스 종료 함수
         # def terminate_processes(processes):

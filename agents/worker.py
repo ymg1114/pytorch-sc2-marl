@@ -64,7 +64,7 @@ class Worker:
         port,
         learner_port,
         env_space,
-        heartbeat=None
+        heartbeat=None,
     ):
         self.args = args
         self.device = args.device  # cpu
@@ -103,7 +103,9 @@ class Worker:
             self.stat_pub_socket.close()
         if hasattr(self, "sub_socket"):
             self.sub_socket.close()
-
+        if hasattr(self, "env"):
+            self.env.close()
+            
     def zeromq_set(self, manager_ip, learner_ip, port, learner_port):
         context = zmq.asyncio.Context()
 
@@ -219,3 +221,44 @@ class Worker:
                     break
 
             await self.pub_stat(info) # 경기 종료 시 반환하는 info 포함
+            
+            
+class TestWorker(Worker):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def render_test(self):
+        print(f"Build Environment for {self.worker_name}")
+
+        while not self.stop_event.is_set():
+            self.env.reset()
+
+            hx, cx = self.initialize_lstm()
+
+            dead_agents_vec = torch.zeros(self.env_info["n_agents"])
+            
+            agent_tag = [] # TODO: 디버그 완료 후, 제거 필요
+            is_full = [False] # TODO: 디버그 완료 후, 제거 필요
+            
+            for _ in range(self.env_info["episode_limit"]):
+                obs_dict = self.env.get_obs_dict()
+                act_dict = self.model.act(obs_dict, hx, cx)
+                self.set_default_actions(act_dict)
+                
+                check_act_avail(self.env, act_dict, self.env_info["n_agents"])
+                check_agent_id(self.env.agents, self.env_info["n_agents"], agent_tag, is_full)
+                
+                rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
+                self.env.render() # Uncomment for rendering
+                
+                print(f"rew_vec : {rew_vec}")
+                
+                hx = act_dict["hx"]
+                cx = act_dict["cx"]
+                
+                time.sleep(0.15)
+
+                if terminated:
+                    # if not info.get("battle_won", True):
+                    #     assert bool(dead_agents_vec.all()) # 패배한 경우, 모든 에이전트는 반드시 사망해야 함
+                    break

@@ -10,7 +10,7 @@ from utils.utils import Protocol, encode, decode, SC2Config
 
 from env.sc2_env_wrapper import WrapperSMAC2
 
-from rewarder.rewarder import REWARD_PARAM
+# from rewarder.rewarder import REWARD_PARAM
 
 from typing import TYPE_CHECKING
 
@@ -183,7 +183,7 @@ class Worker:
             _id = str(uuid.uuid4()) # 각 경기의 고유한 난수
             
             hx, cx = self.initialize_lstm()
-            self.epi_rew_vec = np.zeros((self.env_info["n_agents"], len(REWARD_PARAM)), dtype=np.float32)
+            self.epi_rew_vec = np.zeros((self.env_info["n_agents"], 1), dtype=np.float32)
             dead_agents_vec = torch.zeros(self.env_info["n_agents"])
             
             is_first = True
@@ -197,8 +197,9 @@ class Worker:
                 # check_act_avail(self.env, act_dict, self.env_info["n_agents"])
                 # check_agent_id(self.env.agents, self.env_info["n_agents"], agent_tag, is_full)
                 
-                rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
+                rew, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
                 # self.env.render() # Uncomment for rendering
+                rew_vec = rew * np.ones((self.env_info["n_agents"], 1), dtype=np.float32)
                 
                 self.epi_rew_vec += rew_vec
                 done_vec = torch.ones(self.env_info["n_agents"]) if terminated else torch.zeros(self.env_info["n_agents"])

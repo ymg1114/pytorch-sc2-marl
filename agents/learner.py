@@ -31,7 +31,7 @@ from . import (
     ppo_awrapper,
     impala_awrapper,
 )
-from rewarder.rewarder import REWARD_PARAM
+# from rewarder.rewarder import REWARD_PARAM
 
 from typing import TYPE_CHECKING
 
@@ -165,18 +165,20 @@ class LearnerBase(SMInterface):
 
         if self.stat_q.qsize() > 0:
             stat_dict = await self.stat_q.get()
+            # stat_keys = list(sample_stat_dict.keys())
 
             for k, v in stat_dict.items():
-                if k != "epi_rew_vec":
-                    tag = f"stat-{k}"
-                    y = np.mean(v)
-                    self.writer.add_scalar(tag, y, self.idx)
-
-            _mean_rew_vec = np.mean(stat_dict["epi_rew_vec"], axis=0)
-            for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
-                tag = f"mean-reward-{r_param}"
-                _reward = _mean_rew_vec[rdx]
-                self.writer.add_scalar(tag, _reward, self.idx)
+                # if k != "epi_rew_vec":
+                tag = f"stat-{k}"
+                y = np.mean(v)
+                self.writer.add_scalar(tag, y, self.idx)
+                    
+            # _mean_rew_vec = np.mean(extract_values(self.stat_q, "epi_rew_vec"), axis=(0, 1))
+            
+            # for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
+            #     tag = f"mean-weighted-reward-{r_param}"
+            #     weighted_reward = _mean_rew_vec[rdx] * weight
+            #     self.writer.add_scalar(tag, weighted_reward, self.idx)
                 
     # @staticmethod
     # def copy_to_ndarray(src):

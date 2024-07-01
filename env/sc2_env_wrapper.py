@@ -9,7 +9,7 @@ from absl import logging
 
 from s2clientprotocol import sc2api_pb2 as sc_pb
 
-from rewarder.rewarder import Rewarder, REWARD_PARAM
+# from rewarder.rewarder import Rewarder, REWARD_PARAM
 from observer.observer import Observer
 
 # from gymnasium.spaces import Dict
@@ -21,7 +21,7 @@ from utils.utils import *
 class WrapperSC2Env(StarCraft2Env):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.rewarder = Rewarder(self)
+        # self.rewarder = Rewarder(self)
         self.observer = Observer(self)
 
     def act_dict_converter(self, act_dict):
@@ -119,7 +119,7 @@ class WrapperSC2Env(StarCraft2Env):
                 sc_action, action_num = self.get_agent_action_heuristic(
                     a_id, action
                 )
-                # actions[a_id] = action_num # TODO: 필요한 처리 로직..?
+                # actions[a_id] = action_num
             if sc_action:
                 sc_actions.append(sc_action)
         # Send action request
@@ -142,7 +142,7 @@ class WrapperSC2Env(StarCraft2Env):
             self._obs = self._controller.observe()
         except (protocol.ProtocolError, protocol.ConnectionError):
             self.full_restart()
-            return np.zeros((len(REWARD_PARAM), len(self.agents)), dtype=np.float32), True, {}
+            return 0, True, {}
 
         self._total_steps += 1
         self._episode_steps += 1
@@ -151,11 +151,8 @@ class WrapperSC2Env(StarCraft2Env):
         game_end_code = self.update_units()
 
         terminated = False
-        info = {}
-        # info = {"battle_won": False}
-        
-        # 각 유닛 (에이전트) 별 리워드 획득
-        reward_vec = self.rewarder.get(game_end_code)
+        reward = self.reward_battle()
+        info = {"battle_won": False}
 
         # count units that are still alive
         dead_allies, dead_enemies = 0, 0
@@ -163,13 +160,11 @@ class WrapperSC2Env(StarCraft2Env):
             if al_unit.health == 0:
                 dead_allies += 1
                 dead_agents_vec[aid] = 1.0 # 죽은 에이전트
-                
                 for e in range(self.n_enemies):
                     if self.enemy_tags[e] == _al_id:
                         self.enemy_tags[e] = None
                         self.obs_enemies[e, :] = 0
                         self.obs_enemies[:, _al_id] = 0
-                        
         for _e_id, e_unit in self.enemies.items():
             if e_unit.health == 0:
                 dead_enemies += 1
@@ -186,10 +181,18 @@ class WrapperSC2Env(StarCraft2Env):
             if game_end_code == 1 and not self.win_counted:
                 self.battles_won += 1
                 self.win_counted = True
-                # info["battle_won"] = True
+                info["battle_won"] = True
+                if not self.reward_sparse:
+                    reward += self.reward_win
+                else:
+                    reward = 1
             elif game_end_code == -1 and not self.defeat_counted:
                 self.defeat_counted = True
-            
+                if not self.reward_sparse:
+                    reward += self.reward_defeat
+                else:
+                    reward = -1
+
         elif self._episode_steps >= self.episode_limit:
             # Episode limit reached
             terminated = True
@@ -199,16 +202,17 @@ class WrapperSC2Env(StarCraft2Env):
             self.timeouts += 1
 
         if self.debug:
-            logging.debug("Reward = {}".format(reward_vec).center(60, "-"))
+            logging.debug("Reward = {}".format(reward).center(60, "-"))
 
         if terminated:
             self._episode_count += 1
 
-        # TODO: 원래 코드가 이렇게 사용하는데, 이 부분에서 버그가 발생할 수 있음. scalar -> vector
-        # self.reward = reward
-        self.reward_vec = reward_vec
+        if self.reward_scale:
+            reward /= self.max_reward / self.reward_scale_rate
 
-        return reward_vec, terminated, info
+        self.reward = reward
+
+        return reward, terminated, info
 
 
 class WrapperSMAC2(StarCraftCapabilityEnvWrapper):
@@ -248,7 +252,7 @@ class WrapperSMAC2(StarCraftCapabilityEnvWrapper):
                 on_select_target=MDSD(nvec=(B, S, 1))
             ),
             rew=RewardSpace(
-                rew_vec=MDSD(nvec=(B, S, len(REWARD_PARAM)))
+                rew_vec=MDSD(nvec=(B, S, 1))
             ),
             info=InfoSpace(
                 is_fir=MDSD(nvec=(B, S, 1))

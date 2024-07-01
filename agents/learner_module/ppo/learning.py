@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from utils.utils import ExecutionTimer
 
-from ..compute_loss import compute_gae, rew_vec_to_scaled_scalar, cal_hier_log_probs
+from ..compute_loss import compute_gae, cal_hier_log_probs
 
 
 async def learning(parent, timer: ExecutionTimer):
@@ -32,7 +32,7 @@ async def learning(parent, timer: ExecutionTimer):
                     info_dict = {k: v.to(parent.device) for k, v, in batch_dict["info"].items()}
                     
                     behav_log_probs  = cal_hier_log_probs(act_dict)
-                    rew_sca = rew_vec_to_scaled_scalar(rew_dict)
+                    rew_sca = rew_dict["rew_vec"]
                     
                     is_fir = info_dict["is_fir"]
                     hx, cx = obs_dict["hx"], obs_dict["cx"]

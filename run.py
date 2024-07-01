@@ -14,8 +14,8 @@ remote_dir = "~/remote_repo_sc2"
 ssh_private_key = "ssh -i ~/.ssh/id_rsa" # ssh 개인키, 접속 대상 머신에 공개키를 머리 전송해 놓아야 함
 
 exclude_dirs = ["results", "logs", "assets", "__pycache__", "LICENSE", "README.md", ".git", ".gitignore"]
-pre_activate = "source ~/anaconda3/etc/profile.d/conda.sh" # 모든 분산 머신에서 공용
-post_activet_env = f"conda activate {vir_env_name}" # 모든 분산 머신에서 공용
+
+activet_env = f"conda activate {vir_env_name}" # 모든 분산 머신에서 공용
 
 
 # 복사 제외 디렉터리 옵션 생성
@@ -42,8 +42,8 @@ def copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_
     return append_command(commands, f'tmux send-keys -t {session_name} "rsync -avz --progress {exclude_opts} -e {ssh_private_key} {local_dir}/ {account}@{remote_ip}:{remote_dir}/" C-m')
 
 
-def activate_vir_env(commands, session_name, pre_activate, post_activet_env):
-    return append_command(commands, f'tmux send-keys -t {session_name} "{pre_activate} && {post_activet_env}" C-m')
+def activate_vir_env(commands, session_name, activet_env):
+    return append_command(commands, f'tmux send-keys -t {session_name} "{activet_env}" C-m')
 
 
 def run_python_script(commands, session_name, remote_dir, run_python):
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     commands = copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_dir, learner_info.account, learner_info.ip, remote_dir)
     commands = ssh_connect(commands, session_name, learner_info.account, learner_info.ip)
     commands = make_remote_directory(commands, session_name, remote_dir)
-    commands = activate_vir_env(commands, session_name, pre_activate, post_activet_env)
+    commands = activate_vir_env(commands, session_name, activet_env)
     commands = run_python_script(commands, session_name, remote_dir, run_python)
     # commands = exit_tmux_session(commands, session_name)
     
@@ -85,7 +85,7 @@ if __name__ == "__main__":
         commands = copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_dir, worker_info.account, worker_info.manager_ip, remote_dir)
         commands = ssh_connect(commands, session_name, worker_info.account, worker_info.manager_ip)
         commands = make_remote_directory(commands, session_name, remote_dir)
-        commands = activate_vir_env(commands, session_name, pre_activate, post_activet_env)
+        commands = activate_vir_env(commands, session_name, activet_env)
         commands = run_python_script(commands, session_name, remote_dir, run_python)
         # commands = exit_tmux_session(commands, session_name)
 
@@ -98,7 +98,7 @@ if __name__ == "__main__":
         commands = copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_dir, worker_info.account, worker_info.ip, remote_dir)
         commands = ssh_connect(commands, session_name, worker_info.account, worker_info.ip)
         commands = make_remote_directory(commands, session_name, remote_dir)
-        commands = activate_vir_env(commands, session_name, pre_activate, post_activet_env)
+        commands = activate_vir_env(commands, session_name, activet_env)
         commands = run_python_script(commands, session_name, remote_dir, run_python)
         # commands = exit_tmux_session(commands, session_name)
 

@@ -110,28 +110,28 @@ class Runner:
 
     @staticmethod
     def manager_run(
-        args, stop_event, manager_ip, learner_ip, port, learner_port, heartbeat=None
+        args, stop_event, manager_ip, learner_ip, manager_port, learner_port, heartbeat=None
     ):
         manager = Manager(
-            args, stop_event, manager_ip, learner_ip, port, learner_port, heartbeat,
+            args, stop_event, manager_ip, learner_ip, manager_port, learner_port, heartbeat,
         )
         asyncio.run(manager.data_chain())
 
     @staticmethod
     def worker_run(
-        model_cls, worker_name, stop_event, args, manager_ip, learner_ip, port, learner_port, env_space, heartbeat=None
+        model_cls, worker_name, stop_event, args, manager_ip, learner_ip, manager_port, learner_worker_port, env_space, heartbeat=None
     ):
         worker = Worker(
-            args, model_cls, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, env_space, heartbeat
+            args, model_cls, worker_name, stop_event, manager_ip, learner_ip, manager_port, learner_worker_port, env_space, heartbeat
         )
         asyncio.run(worker.life_cycle_chain())  # collect rollout
 
     @staticmethod
     def test_worker_run(
-        model_cls, worker_name, stop_event, args, manager_ip, learner_ip, port, learner_port, env_space, heartbeat=None
+        model_cls, worker_name, stop_event, args, manager_ip, learner_ip, manager_port, learner_worker_port, env_space, heartbeat=None
     ):
         test_worker = TestWorker(
-            args, model_cls, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, env_space, heartbeat
+            args, model_cls, worker_name, stop_event, manager_ip, learner_ip, manager_port, learner_worker_port, env_space, heartbeat
         )
         test_worker.render_test()
 
@@ -167,7 +167,7 @@ class Runner:
         shm_ref,
         stop_event,
         learner_ip,
-        learner_port,
+        learner_worker_port,
         env_space,
         heartbeat=None,
     ):
@@ -178,7 +178,7 @@ class Runner:
             shm_ref,
             stop_event,
             learner_ip,
-            learner_port,
+            learner_worker_port,
             env_space,
             heartbeat,
         )
@@ -192,7 +192,7 @@ class Runner:
         asyncio.run(learning_chain())
 
     @register
-    def manager_sub_process(self, manager_ip, learner_ip, port, learner_port):
+    def manager_sub_process(self, manager_ip, learner_ip, manager_port, learner_port):
         heartbeat = mp.Value("f", time.monotonic())
         
         src_m = {
@@ -202,7 +202,7 @@ class Runner:
                 self.stop_event,
                 manager_ip, 
                 learner_ip,
-                port,
+                manager_port,
                 learner_port,
             ),
             "kwargs": {"heartbeat": heartbeat},
@@ -219,7 +219,7 @@ class Runner:
             _mp.start()
 
     @register
-    def worker_sub_process(self, num_p, manager_ip, learner_ip, port, learner_port):
+    def worker_sub_process(self, num_p, manager_ip, learner_ip, manager_port, learner_worker_port):
         for i in range(int(num_p)):
             print("Build Worker {:d}".format(i))
             worker_name = "worker_" + str(i)
@@ -235,8 +235,8 @@ class Runner:
                     self.args,
                     manager_ip, 
                     learner_ip,
-                    port,
-                    learner_port,
+                    manager_port,
+                    learner_worker_port,
                     self.env_space,
                 ),
                 "kwargs": {"heartbeat": heartbeat},
@@ -257,37 +257,37 @@ class Runner:
         #     wp.join()
 
     @register
-    def learner_sub_process(self, learner_ip, learner_port):
-        mutex = Mutex()
+    def learner_sub_process(self, learner_ip, learner_worker_port, *learner_ports):
+        # 1개의 Learner, 여러개의 Storage에서 공유하는 자료형
+        mutex = Mutex() # 동기화를 위한 잠금장치
+        shm_ref = setup_shared_memory(self.env_space) # 학습을 위한 공유메모리 확보
 
-        # 학습을 위한 공유메모리 확보
-        shm_ref = setup_shared_memory(self.env_space)
+        for learner_port in learner_ports:
+            heartbeat = mp.Value("f", time.monotonic())
 
-        heartbeat = mp.Value("f", time.monotonic())
+            src_s = {
+                "target": Runner.storage_run,
+                "args": (
+                    self.args,
+                    mutex,
+                    shm_ref,
+                    self.stop_event,
+                    learner_ip,
+                    learner_port,
+                    self.env_space,
+                ),
+                "kwargs": {
+                    "heartbeat": heartbeat,
+                },
+            }
 
-        src_s = {
-            "target": Runner.storage_run,
-            "args": (
-                self.args,
-                mutex,
-                shm_ref,
-                self.stop_event,
-                learner_ip,
-                learner_port,
-                self.env_space,
-            ),
-            "kwargs": {
-                "heartbeat": heartbeat,
-            },
-        }
-
-        s = Process(
-            target=src_s.get("target"),
-            args=src_s.get("args"),
-            kwargs=src_s.get("kwargs"),
-            daemon=True,
-        )  # child-processes
-        child_process.update({s: src_s})
+            s = Process(
+                target=src_s.get("target"),
+                args=src_s.get("args"),
+                kwargs=src_s.get("kwargs"),
+                daemon=True,
+            )  # child-processes
+            child_process.update({s: src_s})
 
         heartbeat = mp.Value("f", time.monotonic())
 
@@ -301,7 +301,7 @@ class Runner:
                 shm_ref,
                 self.stop_event,
                 learner_ip,
-                learner_port,
+                learner_worker_port,
                 self.env_space,
             ),
             "kwargs": {
@@ -324,9 +324,9 @@ class Runner:
         #     lp.join()
 
     @register
-    def worker_test_process(self, num_p, manager_ip, learner_ip, port, learner_port):
+    def worker_test_process(self, num_p, manager_ip, learner_ip, manager_port, learner_worker_port):
         """TestWorker를 (학습) Worker를 상속받아 구현.
-        num_p, manager_ip, learner_ip, port, learner_port는 불필요한 dummy args
+        num_p, manager_ip, learner_ip, manager_port, learner_worker_port는 불필요한 dummy args
         """
         
         print("Build Test Worker")
@@ -339,8 +339,8 @@ class Runner:
             self.args,
             manager_ip, 
             learner_ip,
-            port,
-            learner_port,
+            manager_port,
+            learner_worker_port,
             self.env_space,
         )
 

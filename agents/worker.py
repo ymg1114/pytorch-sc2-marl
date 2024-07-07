@@ -61,8 +61,8 @@ class Worker:
         stop_event,
         manager_ip,
         learner_ip,
-        port,
-        learner_port,
+        manager_port,
+        learner_worker_port,
         env_space,
         heartbeat=None,
     ):
@@ -95,7 +95,7 @@ class Worker:
         self.env_info = self.env.get_env_info()
         self.env_space = self.env.get_env_space(self.args)
 
-        self.zeromq_set(manager_ip, learner_ip, port, learner_port)
+        self.zeromq_set(manager_ip, learner_ip, manager_port, learner_worker_port)
 
     def __del__(self):  # 소멸자
         if hasattr(self, "rollout_pub_socket"):
@@ -107,20 +107,20 @@ class Worker:
         if hasattr(self, "env"):
             self.env.close()
             
-    def zeromq_set(self, manager_ip, learner_ip, port, learner_port):
+    def zeromq_set(self, manager_ip, learner_ip, manager_port, learner_worker_port):
         context = zmq.asyncio.Context()
 
         # worker <-> manager
         self.rollout_pub_socket = context.socket(zmq.PUB)
-        self.rollout_pub_socket.connect(f"tcp://{manager_ip}:{port}")  # publish rollout
+        self.rollout_pub_socket.connect(f"tcp://{manager_ip}:{manager_port}")  # publish rollout
 
         # worker <-> learner
         self.stat_pub_socket = context.socket(zmq.PUB)
-        self.stat_pub_socket.connect(f"tcp://{learner_ip}:{int(learner_port) + 2}")  # publish stat
+        self.stat_pub_socket.connect(f"tcp://{learner_ip}:{int(learner_worker_port) + 2}")  # publish stat
 
         self.sub_socket = context.socket(zmq.SUB)
         self.sub_socket.connect(
-            f"tcp://{learner_ip}:{int(learner_port) + 1}"
+            f"tcp://{learner_ip}:{int(learner_worker_port) + 1}"
         )  # subscribe model
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 

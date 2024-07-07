@@ -14,7 +14,6 @@ remote_dir = "~/remote_repo_sc2"
 ssh_private_key = "ssh -i ~/.ssh/id_rsa" # ssh 개인키, 접속 대상 머신에 공개키를 머리 전송해 놓아야 함
 
 exclude_dirs = ["results", "logs", "assets", "__pycache__", "LICENSE", "README.md", ".git", ".gitignore"]
-
 activet_env = f"conda activate {vir_env_name}" # 모든 분산 머신에서 공용
 
 
@@ -59,48 +58,58 @@ def exit_tmux_session(commands, session_name, should_exit=True):
 if __name__ == "__main__":
     commands = ""
 
-    learner_info = Machines.learner
-    worker_infos = Machines.workers
+    infos = Machines.storage
+    learner_account = Machines.learner_account
+    learner_ip = Machines.learner_ip
+    learner_worker_port = Machines.learner_worker_port  # Learner와 Worker 사이의 stat 및 학습된 신경망 전송을 위한 port
+
+    # Learner와 Storage는 반드시 동일 머신에 존재
+    # Learner는 1개, Storage는 여러 개가 될 수 있음 -> Learner ip는 1개, Storage 객체의 port는 여러 개
     
     # Learner
-    session_name = f"learner_{learner_info.ip.replace('.', '_')}"
-    # run_python = f"nohup python main.py learner_sub_process {learner_info.ip} {learner_info.port} learner.log 2>&1 &"
-    run_python = f"python main.py learner_sub_process {learner_info.ip} {learner_info.port}"
-    
+    session_name = f"learner_{learner_ip.replace('.', '_')}"
+    # run_python = "nohup python main.py learner_sub_process {learner_ip} {learner_worker_port} learner.log 2>&1 &"
+    run_python = f"python main.py learner_sub_process {learner_ip} {learner_worker_port}"
+    for i, info in enumerate(infos):
+        run_python += f" {info.learner_port}"
+
     commands = start_tmux_session(commands, session_name)
-    commands = copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_dir, learner_info.account, learner_info.ip, remote_dir)
-    commands = ssh_connect(commands, session_name, learner_info.account, learner_info.ip)
+    commands = copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_dir, learner_account, learner_ip, remote_dir)
+    commands = ssh_connect(commands, session_name, learner_account, learner_ip)
     commands = make_remote_directory(commands, session_name, remote_dir)
     commands = activate_vir_env(commands, session_name, activet_env)
     commands = run_python_script(commands, session_name, remote_dir, run_python)
     # commands = exit_tmux_session(commands, session_name)
-    
-    for i, worker_info in enumerate(worker_infos):
-        # Manager
-        session_name = f"manager_{i}_{worker_info.manager_ip.replace('.', '_')}"
-        # run_python = f"nohup python main.py manager_sub_process {worker_info.manager_ip} {learner_info.ip} {worker_info.port} {learner_info.port} manager_{i}.log 2>&1 &"
-        run_python = f"python main.py manager_sub_process {worker_info.manager_ip} {learner_info.ip} {worker_info.port} {learner_info.port}"
-        
-        commands = start_tmux_session(commands, session_name)
-        commands = copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_dir, worker_info.account, worker_info.manager_ip, remote_dir)
-        commands = ssh_connect(commands, session_name, worker_info.account, worker_info.manager_ip)
-        commands = make_remote_directory(commands, session_name, remote_dir)
-        commands = activate_vir_env(commands, session_name, activet_env)
-        commands = run_python_script(commands, session_name, remote_dir, run_python)
-        # commands = exit_tmux_session(commands, session_name)
 
-        # Worker
-        session_name = f"worker_{i}_{worker_info.ip.replace('.', '_')}"
-        # run_python = f"nohup python main.py worker_sub_process {worker_info.num_p} {worker_info.manager_ip} {learner_info.ip} {worker_info.port} {learner_info.port} worker_{i}.log 2>&1 &"
-        run_python = f"python main.py worker_sub_process {worker_info.num_p} {worker_info.manager_ip} {learner_info.ip} {worker_info.port} {learner_info.port}"
-        
-        commands = start_tmux_session(commands, session_name)
-        commands = copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_dir, worker_info.account, worker_info.ip, remote_dir)
-        commands = ssh_connect(commands, session_name, worker_info.account, worker_info.ip)
-        commands = make_remote_directory(commands, session_name, remote_dir)
-        commands = activate_vir_env(commands, session_name, activet_env)
-        commands = run_python_script(commands, session_name, remote_dir, run_python)
-        # commands = exit_tmux_session(commands, session_name)
+    # Manager와 Worker는 반드시 동일 머신에 존재
+    # Worker의 ip, port 정보는 필요치 않음 -> Manager 단에서 bind된 ip, port에 connect 하기 때문
+    for i, info in enumerate(infos):
+        for j, w_info in enumerate(info.workers):
+            # Manager
+            session_name = f"manager_{i}_{j}_{w_info.manager_ip.replace('.', '_')}"
+            # run_python = f"nohup python main.py manager_sub_process {w_info.manager_ip} {learner_ip} {w_info.manager_port} {info.learner_port} > manager.log 2>&1 &"
+            run_python = f"python main.py manager_sub_process {w_info.manager_ip} {learner_ip} {w_info.manager_port} {info.learner_port}"
+
+            commands = start_tmux_session(commands, session_name)
+            commands = copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_dir, w_info.account, w_info.manager_ip, remote_dir)
+            commands = ssh_connect(commands, session_name, w_info.account, w_info.manager_ip)
+            commands = make_remote_directory(commands, session_name, remote_dir)
+            commands = activate_vir_env(commands, session_name, activet_env)
+            commands = run_python_script(commands, session_name, remote_dir, run_python)
+            # commands = exit_tmux_session(commands, session_name)
+
+            # Worker
+            session_name = f"worker_{i}_{j}_{w_info.manager_ip.replace('.', '_')}"
+            # run_python = f"nohup python main.py worker_sub_process {w_info.num_p} {w_info.manager_ip} {learner_ip} {w_info.manager_port} {learner_worker_port} > worker.log 2>&1 &"
+            run_python = f"python main.py worker_sub_process {w_info.num_p} {w_info.manager_ip} {learner_ip} {w_info.manager_port} {learner_worker_port}"
+
+            commands = start_tmux_session(commands, session_name)
+            commands = copy_directory(commands, session_name, exclude_opts, ssh_private_key, local_dir, w_info.account, w_info.manager_ip, remote_dir)
+            commands = ssh_connect(commands, session_name, w_info.account, w_info.manager_ip)
+            commands = make_remote_directory(commands, session_name, remote_dir)
+            commands = activate_vir_env(commands, session_name, activet_env)
+            commands = run_python_script(commands, session_name, remote_dir, run_python)
+            # commands = exit_tmux_session(commands, session_name)
 
     # 스크립트 실행
     os.system(commands)

@@ -12,14 +12,11 @@ from buffers.rollout_assembler import RolloutAssembler
 from utils.lock import Mutex
 from utils.utils import (
     Protocol,
-    mul,
+    # mul,
     decode,
     flatten,
-    counted,
+    # counted,
 )
-# from rewarder.rewarder import REWARD_PARAM
-
-# timer = ExecutionTimer(num_transition=Params.seq_len*1) # LearnerStorage에서 데이터 처리량 (수신) / 부정확한 값이지만 어쩔 수 없음
 
 
 class LearnerStorage(SMInterface):

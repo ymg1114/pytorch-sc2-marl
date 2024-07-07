@@ -1,30 +1,35 @@
 {
-    "learner": {
-        "account": "...",
-        "ip": "...",
-        "port": 47165
-    },
-    "workers": [
+    "learner_account": "...",
+    "learner_ip": "...",
+    "learner_worker_port": 8900,
+    "storage": [
         {
-            "account": "...",
-            "num_p": 10,
-            "manager_ip": "...",
-            "ip": "...",
-            "port": 27165
+            "learner_port": 9000,
+            "workers": [
+                {
+                    "account": "...",
+                    "num_p": 40,
+                    "manager_ip": "...",
+                    "manager_port": 9200
+                }
+            ]
         },
         {
-            "account": "...",
-            "num_p": 10,
-            "manager_ip": "...",
-            "ip": "...",
-            "port": 27166
-        },
-        {
-            "account": "...",
-            "num_p": 10,
-            "manager_ip": "...",
-            "ip": "...",
-            "port": 27167
+            "learner_port": 9100,
+            "workers": [
+                {
+                    "account": "...",
+                    "num_p": 20,
+                    "manager_ip": "...",
+                    "manager_port": 9300
+                },
+                {
+                    "account": "...",
+                    "num_p": 20,
+                    "manager_ip": "...",
+                    "manager_port": 9400
+                }
+            ]
         }
     ]
 }

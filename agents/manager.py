@@ -3,19 +3,18 @@ import zmq.asyncio
 import time
 import asyncio
 import numpy as np
-from collections import deque
-
+# from collections import deque
 from utils.utils import Protocol, encode, decode
 
 
 class Manager:
-    def __init__(self, args, stop_event, manager_ip, learner_ip, port, learner_port, heartbeat=None):
+    def __init__(self, args, stop_event, manager_ip, learner_ip, manager_port, learner_port, heartbeat=None):
         self.args = args
         self.stop_event = stop_event
 
         self.heartbeat = heartbeat
         
-        self.zeromq_set(manager_ip, learner_ip, port, learner_port)
+        self.zeromq_set(manager_ip, learner_ip, manager_port, learner_port)
 
     def __del__(self):  # 소멸자
         if hasattr(self, "pub_socket"):
@@ -23,12 +22,12 @@ class Manager:
         if hasattr(self, "sub_socket"):
             self.sub_socket.close()
 
-    def zeromq_set(self, manager_ip, learner_ip, port, learner_port):
+    def zeromq_set(self, manager_ip, learner_ip, manager_port, learner_port):
         context = zmq.asyncio.Context()
 
         # worker <-> manager
         self.sub_socket = context.socket(zmq.SUB)  # subscribe rollout-data, stat-data
-        self.sub_socket.bind(f"tcp://{manager_ip}:{port}")
+        self.sub_socket.bind(f"tcp://{manager_ip}:{manager_port}")
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
         # manager <-> learner-storage

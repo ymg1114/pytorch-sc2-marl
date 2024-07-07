@@ -48,16 +48,18 @@ class ModelSingle(nn.Module):
         self.encode_ally = nn.Linear(self.obs_ally_shape[-1], self.hidden_size)
         self.encode_enemy = nn.Linear(self.obs_enemy_shape[-1], self.hidden_size)
         self.encode_body = nn.Linear(self.hidden_size*3, self.hidden_size)
-
+        self.encode_attn = nn.Linear(self.hidden_size, self.hidden_size)
+        
         # normalization layers
         self.norm_mine = nn.LayerNorm(self.hidden_size)
-        self.norm_ally = nn.LayerNorm(self.hidden_size)
-        self.norm_enemy = nn.LayerNorm(self.hidden_size)
+        # self.norm_ally = nn.LayerNorm(self.hidden_size)
+        # self.norm_enemy = nn.LayerNorm(self.hidden_size)
         self.norm_body = nn.LayerNorm(self.hidden_size)
-
-        # attention
-        self.mine_attn_v = nn.Linear(self.obs_mine_shape[-1], self.hidden_size)
-        self.multihead_attn = nn.MultiheadAttention(self.hidden_size, num_heads=3, batch_first=True)
+        self.norm_attn = nn.LayerNorm(self.hidden_size)
+        
+        # # attention
+        # self.mine_attn_v = nn.Linear(self.obs_mine_shape[-1], self.hidden_size)
+        # self.multihead_attn = nn.MultiheadAttention(self.hidden_size, num_heads=3, batch_first=True)
 
         # lstm
         self.lstmcell = nn.LSTMCell(self.hidden_size, self.hidden_size)
@@ -117,20 +119,22 @@ class ModelSingle(nn.Module):
         obs_ally = obs_dict["obs_ally"]
         obs_enemy = obs_dict["obs_enemy"]
 
-        # 죽은 유닛에 대한 마스크 생성, obs_* -> all zero value array
-        dead_units_mask = (obs_mine.sum(dim=-1) == 0) & (obs_ally.sum(dim=-1) == 0) & (obs_enemy.sum(dim=-1) == 0)
+        # # 죽은 유닛에 대한 마스크 생성, obs_* -> all zero value array
+        # dead_units_mask = (obs_mine.sum(dim=-1) == 0) & (obs_ally.sum(dim=-1) == 0) & (obs_enemy.sum(dim=-1) == 0)
 
-        ec_mine = self.norm_mine(self.encode_mine(obs_mine))
-        ec_ally = self.norm_ally(self.encode_ally(obs_ally))
-        ec_enemy = self.norm_enemy(self.encode_enemy(obs_enemy))
+        ec_mine = self.norm_mine(F.relu(self.encode_mine(obs_mine)))
+        ec_ally = self.encode_ally(obs_ally)
+        ec_enemy = self.encode_enemy(obs_enemy)
 
-        mine_v = F.relu(self.mine_attn_v(obs_mine))
+        # mine_v = F.relu(self.mine_attn_v(obs_mine))
 
-        ec_body = F.relu(self.norm_body(self.encode_body(torch.cat([ec_mine, ec_ally, ec_enemy], dim=-1))))
+        ec_body = self.norm_body(F.relu(self.encode_body(torch.cat([ec_mine, ec_ally, ec_enemy], dim=-1))))
 
-        attn_out, attn_weights = self.multihead_attn(ec_mine, ec_body, mine_v, key_padding_mask=dead_units_mask.float()) # q, k, v
-        return attn_out, attn_weights
-    
+        # attn_out, attn_weights = self.multihead_attn(ec_mine, ec_body, mine_v, key_padding_mask=dead_units_mask.float()) # q, k, v
+        # return attn_out, attn_weights
+        out_encode = self.norm_attn(F.relu(self.encode_attn(ec_body)))
+        return out_encode
+        
     def get_dists(self, x, obs_dict):
         avail_act = obs_dict["avail_act"]
         avail_move = obs_dict["avail_move"]
@@ -147,9 +151,9 @@ class ModelSingle(nn.Module):
         return dist_act, dist_move, dist_target
 
     def act(self, obs_dict, hx, cx):
-        attn_out, _ = self.body_encode(obs_dict)
+        out_encode = self.body_encode(obs_dict)
         
-        hx, cx = self.lstmcell(attn_out, (hx, cx))
+        hx, cx = self.lstmcell(out_encode, (hx, cx))
 
         dist_act, dist_move, dist_target = self.get_dists(hx, obs_dict)
 
@@ -178,12 +182,12 @@ class ModelSingle(nn.Module):
         move_sampled = act_dict["move_sampled"]
         target_sampled = act_dict["target_sampled"]
         
-        attn_out, _ = self.body_encode(obs_dict)
-        B, S, _ = attn_out.shape
+        out_encode = self.body_encode(obs_dict)
+        B, S, _ = out_encode.shape
         
         output = []
         for i in range(S):
-            hx, cx = self.lstmcell(attn_out[:, i], (hx, cx))
+            hx, cx = self.lstmcell(out_encode[:, i], (hx, cx))
             output.append(hx)
         output = torch.stack(output, dim=1)
 

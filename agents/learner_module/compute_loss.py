@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 from torch.distributions.kl import kl_divergence
 
-# from rewarder.rewarder import REWARD_PARAM
+from rewarder.rewarder import REWARD_PARAM
 
 
 def compute_gae(
@@ -94,12 +94,12 @@ def cal_hier_log_probs(act_dict):
     return hier_log_probs
 
 
-# def rew_vec_to_scaled_scalar(rew_dict):
-#     rew_vec = rew_dict["rew_vec"]
+def rew_vec_to_scaled_scalar(rew_dict):
+    rew_vec = rew_dict["rew_vec"]
     
-#     B, S, D = rew_vec.shape
-#     assert D == len(REWARD_PARAM)
+    B, S, D = rew_vec.shape
+    assert D == len(REWARD_PARAM)
 
-#     weights = torch.tensor(list(REWARD_PARAM.values()), dtype=rew_vec.dtype, device=rew_vec.device)
-#     scaled_rew_vec = rew_vec * weights
-#     return scaled_rew_vec.sum(-1, keepdim=True)
+    weights = torch.tensor(list(REWARD_PARAM.values()), dtype=rew_vec.dtype, device=rew_vec.device)
+    scaled_rew_vec = rew_vec * weights
+    return scaled_rew_vec.sum(-1, keepdim=True)

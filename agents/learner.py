@@ -31,7 +31,7 @@ from . import (
     ppo_awrapper,
     impala_awrapper,
 )
-# from rewarder.rewarder import REWARD_PARAM
+from rewarder.rewarder import REWARD_PARAM
 
 from typing import TYPE_CHECKING
 
@@ -53,14 +53,14 @@ class LearnerBase(SMInterface):
         shm_ref,
         stop_event,
         learner_ip,
-        learner_port,
+        learner_worker_port,
         env_space,
         heartbeat=None,
     ):
         super().__init__(shm_ref=shm_ref, env_space=env_space)
         self.args = args
         self.env_space = env_space
-        self.mutex: Mutex = mutex
+        self.mutex: Mutex = mutex # 따로 락 객체를 사용하고 있지는 않음
         self.stop_event = stop_event
 
         self.heartbeat = heartbeat
@@ -79,7 +79,7 @@ class LearnerBase(SMInterface):
         self.CT = Categorical
 
         # self.to_gpu = partial(make_gpu_batch, device=self.device)
-        self.zeromq_set(learner_ip, learner_port)
+        self.zeromq_set(learner_ip, learner_worker_port)
         self.get_shared_memory_interface()
         
         from torch.utils.tensorboard import SummaryWriter
@@ -93,20 +93,20 @@ class LearnerBase(SMInterface):
         if hasattr(self, "writer"):
             self.writer.close()
             
-    def zeromq_set(self, learner_ip, learner_port):
+    def zeromq_set(self, learner_ip, learner_worker_port):
         acontext = zmq.asyncio.Context()
         
         # worker <-> learner
         self.sub_socket = acontext.socket(zmq.SUB) # subscribe stat-data
         self.sub_socket.bind(
-            f"tcp://{learner_ip}:{int(learner_port) + 2}"
+            f"tcp://{learner_ip}:{int(learner_worker_port) + 2}"
         )
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"") 
         
         context = zmq.Context()
         self.pub_socket = context.socket(zmq.PUB)
         self.pub_socket.bind(
-            f"tcp://{learner_ip}:{int(learner_port) + 1}"
+            f"tcp://{learner_ip}:{int(learner_worker_port) + 1}"
         )  # publish fresh learner-model
 
     def pub_model(self, model_state_dict):  # learner -> worker
@@ -145,40 +145,22 @@ class LearnerBase(SMInterface):
                 "loss-temperature", detached_losses["loss-temperature"].mean(), self.idx
             )
 
-        if "loss_alpha" in detached_losses:
-            self.writer.add_scalar(
-                "loss_alpha", detached_losses["loss_alpha"].mean(), self.idx
-            )
-
-        if "alpha" in detached_losses:
-            self.writer.add_scalar("alpha", detached_losses["alpha"], self.idx)
-                
-        if timer is not None and isinstance(timer, ExecutionTimer):
-            for k, v in timer.timer_dict.items():
-                self.writer.add_scalar(
-                    f"{k}-elapsed-mean-sec", sum(v) / (len(v) + 1e-6), self.idx
-                )
-            for k, v in timer.throughput_dict.items():
-                self.writer.add_scalar(
-                    f"{k}-transition-per-secs", sum(v) / (len(v) + 1e-6), self.idx
-                )
-
         if self.stat_q.qsize() > 0:
             stat_dict = await self.stat_q.get()
             # stat_keys = list(sample_stat_dict.keys())
 
             for k, v in stat_dict.items():
-                # if k != "epi_rew_vec":
-                tag = f"stat-{k}"
-                y = np.mean(v)
-                self.writer.add_scalar(tag, y, self.idx)
-                    
-            # _mean_rew_vec = np.mean(extract_values(self.stat_q, "epi_rew_vec"), axis=(0, 1))
+                if k != "epi_rew_vec":
+                    tag = f"stat-{k}"
+                    y = np.mean(v)
+                    self.writer.add_scalar(tag, y, self.idx)
+
+            _mean_rew_vec = np.mean(stat_dict["epi_rew_vec"], axis=0)
             
-            # for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
-            #     tag = f"mean-weighted-reward-{r_param}"
-            #     weighted_reward = _mean_rew_vec[rdx] * weight
-            #     self.writer.add_scalar(tag, weighted_reward, self.idx)
+            for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
+                tag = f"mean-weighted-reward-{r_param}"
+                weighted_reward = _mean_rew_vec[rdx] * weight
+                self.writer.add_scalar(tag, weighted_reward, self.idx)
                 
     # @staticmethod
     # def copy_to_ndarray(src):

@@ -145,6 +145,16 @@ class LearnerBase(SMInterface):
                 "loss-temperature", detached_losses["loss-temperature"].mean(), self.idx
             )
 
+        if timer is not None and isinstance(timer, ExecutionTimer):
+            for k, v in timer.timer_dict.items():
+                self.writer.add_scalar(
+                    f"{k}-elapsed-mean-sec", sum(v) / (len(v) + 1e-6), self.idx
+                )
+            for k, v in timer.throughput_dict.items():
+                self.writer.add_scalar(
+                    f"{k}-transition-per-secs", sum(v) / (len(v) + 1e-6), self.idx
+                )
+
         if self.stat_q.qsize() > 0:
             stat_dict = await self.stat_q.get()
             # stat_keys = list(sample_stat_dict.keys())

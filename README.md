@@ -1,6 +1,7 @@
 # pytorch-sc2-marl
 ## Architecture of Multi-Agents Distributed Reinforcement Learning
-![Distributed Reinforcement Learning](https://github.com/user-attachments/assets/fc815215-ed8f-4fd9-bc42-dbf36c6ffc36)
+![Distributed Reinforcement Learning](https://github.com/user-attachments/assets/f471b1bc-f4da-43b9-893d-cdd8f3811560)  
+![Worker Process](https://github.com/user-attachments/assets/63b3ad0e-5e14-4bcb-ba66-b1e99c4803af)  
 
 ## Algo
 __PPO__  

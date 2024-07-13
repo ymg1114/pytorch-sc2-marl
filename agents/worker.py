@@ -165,6 +165,32 @@ class Worker:
         act_dict["on_select_move"] = torch.zeros(self.env_info["n_agents"], 1)
         act_dict["on_select_target"] = torch.zeros(self.env_info["n_agents"], 1)
 
+    def create_rollout_dict_except_already_dead(self, _id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec):
+        rollout_dict = None
+
+        death_tracker_ally = self.env.get_death_tracker_ally() # next-state에서 방금 막 죽은 것이 아닌, 이미 죽어 있는 아군 에이전트
+        # tar_y = np.where(death_tracker_ally == 1)[0] # 이미 죽음
+        not_tar_y = np.where(death_tracker_ally == 0)[0] # current-state 까진 살아 있음 혹은 next-state에서 막 방금 죽음
+
+        id_v = [f"{_id}_{agent_id}" for agent_id in range(self.env_info["n_agents"]) if not death_tracker_ally[agent_id]]
+        obs_dict_v = {k: torch.from_numpy(v[not_tar_y, ...]) for k, v in obs_dict.items()}
+        act_dict_v = {k: v[not_tar_y, ...] for k, v in act_dict.items()}
+        rew_vec_v = torch.from_numpy(rew_vec[not_tar_y, ...])
+        is_fir_v = torch.ones(len(not_tar_y)) if is_first else torch.zeros(len(not_tar_y))
+        done_v = (done_vec.to(torch.bool) | dead_agents_vec.to(torch.bool)).to(done_vec.dtype)[not_tar_y, ...] # 경기 종료 혹은 next-state에서 막 죽은 에이전트는 done 처리
+
+        if not_tar_y.size > 0:
+            rollout_dict = {
+                "id": id_v,
+                "obs_dict": obs_dict_v,
+                "act_dict": act_dict_v,
+                "rew_vec": rew_vec_v,
+                "is_fir": is_fir_v,
+                "done": done_v,
+            }
+
+        return rollout_dict
+
     def create_rollout_dict(self, _id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec):
         return {
             "id": [f"{_id}_{agent_id}" for agent_id in range(self.env_info["n_agents"])],
@@ -202,9 +228,13 @@ class Worker:
 
                 self.epi_rew_vec += rew_vec
                 done_vec = torch.ones(self.env_info["n_agents"]) if terminated else torch.zeros(self.env_info["n_agents"])
+                
+                # roll_out = self.create_rollout_dict(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
+                roll_out = self.create_rollout_dict_except_already_dead(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
+                if roll_out is not None and isinstance(roll_out, dict):
+                    await self.pub_rollout(**roll_out)
 
-                roll_out = self.create_rollout_dict(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
-                await self.pub_rollout(**roll_out)
+                self.env.update_death_tracker()
 
                 is_first = False
                 hx = act_dict["hx"]
@@ -252,6 +282,8 @@ class TestWorker(Worker):
                 self.env.render() # Uncomment for rendering
                 
                 print(f"rew_vec : {rew_vec}")
+                
+                self.env.update_death_tracker()
                 
                 hx = act_dict["hx"]
                 cx = act_dict["cx"]

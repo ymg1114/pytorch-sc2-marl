@@ -152,22 +152,22 @@ class Rewarder():
     def __init__(self, env_core: "StarCraft2Env"):
         self.env_core = env_core # 상위 SC2Env
 
-    # def update(self, rew_vec):
-    #     """리워드 연산 후, 자료형 업데이트"""
+    def update(self, rew_vec):
+        """리워드 연산 후, 자료형 업데이트"""
         
-    #     for al_id, al_unit in self.env_core.agents.items():
-    #         if self.env_core.death_tracker_ally[al_id]: # already dead
-    #             rew_vec[:, al_id] *= 0.0 # 이미 죽어있는 아군 개체에 대해서는 더 이상 리워드를 연산하지 않음
-    #         else: # did not die so far
-    #             if al_unit.health == 0:
-    #                 # just died
-    #                 self.env_core.death_tracker_ally[al_id] = 1 # 자료형 업데이트
+        for al_id, al_unit in self.env_core.agents.items():
+            if self.env_core.death_tracker_ally[al_id]: # already dead
+                rew_vec[:, al_id] *= 0.0 # 이미 죽어있는 아군 개체에 대해서는 더 이상 리워드를 연산하지 않음
+            else: # did not die so far
+                if al_unit.health == 0:
+                    # just died
+                    self.env_core.death_tracker_ally[al_id] = 1 # 자료형 업데이트
 
-    #     for e_id, e_unit in self.env_core.enemies.items():
-    #         if not self.env_core.death_tracker_enemy[e_id]: # did not die so far
-    #             if e_unit.health == 0:
-    #                 # just died
-    #                 self.env_core.death_tracker_enemy[e_id] = 1 # 자료형 업데이트
+        for e_id, e_unit in self.env_core.enemies.items():
+            if not self.env_core.death_tracker_enemy[e_id]: # did not die so far
+                if e_unit.health == 0:
+                    # just died
+                    self.env_core.death_tracker_enemy[e_id] = 1 # 자료형 업데이트
 
     def get(self, game_end_code):
         """주의) 기존에 죽은 아군 유닛에 대해서는, 리워드를 더 이상 연산하지 않음
@@ -180,6 +180,6 @@ class Rewarder():
             assert name in r_func
             r_func[name](self.env_core, rdx, rew_vec, game_end_code=game_end_code)
 
-        # self.update(rew_vec)
+        self.update(rew_vec)
 
         return rew_vec.T # (Agents, REWARD)

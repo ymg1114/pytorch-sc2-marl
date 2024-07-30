@@ -229,12 +229,12 @@ class Worker:
                 self.epi_rew_vec += rew_vec
                 done_vec = torch.ones(self.env_info["n_agents"]) if terminated else torch.zeros(self.env_info["n_agents"])
                 
-                # roll_out = self.create_rollout_dict(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
-                roll_out = self.create_rollout_dict_except_already_dead(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
+                roll_out = self.create_rollout_dict(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
+                # roll_out = self.create_rollout_dict_except_already_dead(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
                 if roll_out is not None and isinstance(roll_out, dict):
                     await self.pub_rollout(**roll_out)
 
-                self.env.update_death_tracker()
+                # self.env.update_death_tracker()
 
                 is_first = False
                 hx = act_dict["hx"]
@@ -283,7 +283,7 @@ class TestWorker(Worker):
                 
                 print(f"rew_vec : {rew_vec}")
                 
-                self.env.update_death_tracker()
+                # self.env.update_death_tracker()
                 
                 hx = act_dict["hx"]
                 cx = act_dict["cx"]

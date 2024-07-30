@@ -216,22 +216,22 @@ class WrapperSMAC2(StarCraftCapabilityEnvWrapper):
         super().__init__(*args, **kwargs)
         self.env = WrapperSC2Env(*args, **kwargs) # override
 
-    def update_death_tracker(self):
-        """리워드 연산 후, 자료형 업데이트
-        그다음 "step" 생명 주기를 호출하기 전에 반드시 수행해야 함
-        """
+    # def update_death_tracker(self):
+    #     """리워드 연산 후, 자료형 업데이트
+    #     그다음 "step" 생명 주기를 호출하기 전에 반드시 수행해야 함
+    #     """
 
-        for al_id, al_unit in self.env.agents.items():
-            if not self.env.death_tracker_ally[al_id]: # did not die so far
-                if al_unit.health == 0:
-                    # just died
-                    self.env.death_tracker_ally[al_id] = 1 # 자료형 업데이트
+    #     for al_id, al_unit in self.env.agents.items():
+    #         if not self.env.death_tracker_ally[al_id]: # did not die so far
+    #             if al_unit.health == 0:
+    #                 # just died
+    #                 self.env.death_tracker_ally[al_id] = 1 # 자료형 업데이트
 
-        for e_id, e_unit in self.env.enemies.items():
-            if not self.env.death_tracker_enemy[e_id]: # did not die so far
-                if e_unit.health == 0:
-                    # just died
-                    self.env.death_tracker_enemy[e_id] = 1 # 자료형 업데이트
+    #     for e_id, e_unit in self.env.enemies.items():
+    #         if not self.env.death_tracker_enemy[e_id]: # did not die so far
+    #             if e_unit.health == 0:
+    #                 # just died
+    #                 self.env.death_tracker_enemy[e_id] = 1 # 자료형 업데이트
 
     def get_death_tracker_ally(self):
         return self.env.death_tracker_ally

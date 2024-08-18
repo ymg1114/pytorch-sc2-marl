@@ -7,8 +7,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from env.env_proxy import EnvSpace
-    
+
+from agents.learner_module.compute_loss import Normalizier
 from utils.utils import *
+
+
+Symlog = Normalizier.symlog
 
 
 def check_for_nan(tensor, name):
@@ -16,14 +20,6 @@ def check_for_nan(tensor, name):
         print(f"NaN values found in {name}")
         print(tensor)
         
-        
-def symlog(x):
-    return torch.sign(x) * torch.log1p(torch.abs(x))
-
-
-def symexp(x):
-    return torch.sign(x) * (torch.exp(torch.abs(x)) - 1)
-
 
 def build_dist(logit, avail):
     assert logit.shape == avail.shape
@@ -65,8 +61,10 @@ class ModelSingle(nn.Module):
         self.lstmcell = nn.LSTMCell(self.hidden_size, self.hidden_size)
 
         # value
-        self.value = nn.Linear(self.hidden_size, 1)
-
+        self.num_bins = 50
+        self.value = nn.Linear(self.hidden_size, self.num_bins)
+        self.bins = torch.linspace(-20, 20, self.num_bins)  # 50 bins 
+        
         # policy
         self.logit_act = nn.Linear(self.hidden_size, self.logit_act_shape[-1])
         self.logit_move = nn.Linear(self.hidden_size, self.logit_move_shape[-1])
@@ -115,9 +113,9 @@ class ModelSingle(nn.Module):
     def body_encode(self, obs_dict):
         obs_dict = self.np_to_torch(obs_dict)
 
-        obs_mine = obs_dict["obs_mine"]
-        obs_ally = obs_dict["obs_ally"]
-        obs_enemy = obs_dict["obs_enemy"]
+        obs_mine = Symlog(obs_dict["obs_mine"])
+        obs_ally = Symlog(obs_dict["obs_ally"])
+        obs_enemy = Symlog(obs_dict["obs_enemy"])
 
         # # 죽은 유닛에 대한 마스크 생성, obs_* -> all zero value array
         # dead_units_mask = (obs_mine.sum(dim=-1) == 0) & (obs_ally.sum(dim=-1) == 0) & (obs_enemy.sum(dim=-1) == 0)

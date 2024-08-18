@@ -6,7 +6,12 @@ import torch.nn.functional as F
 
 from utils.utils import ExecutionTimer
 
-from ..compute_loss import compute_gae, cal_hier_log_probs, rew_vec_to_scaled_scalar
+from ..compute_loss import compute_gae, cal_hier_log_probs, rew_vec_to_scaled_scalar, cross_entropy_loss, Normalizier
+
+
+Symlog = Normalizier.symlog
+TwohotDecoding = Normalizier.twohot_decoding
+TwohotEncoding = Normalizier.twohot_encoding
 
 
 async def learning(parent, timer: ExecutionTimer):
@@ -47,12 +52,17 @@ async def learning(parent, timer: ExecutionTimer):
                             cx[:, 0],
                         )
                         with torch.no_grad():
-                            td_target = (
+                            v_res = TwohotDecoding(value, parent.model.bins)
+                            
+                            td_target_res = (
                                 rew_sca[:, :-1]
-                                + parent.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
+                                + parent.args.gamma * (1 - is_fir[:, 1:]) * v_res[:, 1:]
                             )
-                            delta = td_target - value[:, :-1]
+                            delta = td_target_res - v_res[:, :-1]
 
+                            # td_target_twohot = TwohotEncoding(Symlog(td_target_res), parent.model.bins)
+                            td_target_twohot = TwohotEncoding(td_target_res, parent.model.bins)
+                            
                             gae = compute_gae(
                                 delta, parent.args.gamma, parent.args.lmbda
                             )  # ppo-gae (advantage)
@@ -72,7 +82,8 @@ async def learning(parent, timer: ExecutionTimer):
                         )
 
                         loss_policy = -torch.min(surr1, surr2).mean()
-                        loss_value = F.smooth_l1_loss(value[:, :-1], td_target).mean()
+                        # loss_value = F.smooth_l1_loss(value[:, :-1], td_target).mean()
+                        loss_value = cross_entropy_loss(value[:, :-1], td_target_twohot)
                         policy_entropy = entropy[:, :-1].mean()
 
                         loss = (

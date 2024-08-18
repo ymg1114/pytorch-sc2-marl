@@ -4,9 +4,16 @@ import time
 import torch
 import torch.nn.functional as F
 
+from functools import partial
+
 from utils.utils import ExecutionTimer
 
-from ..compute_loss import compute_v_trace, cal_hier_log_probs, rew_vec_to_scaled_scalar
+from ..compute_loss import compute_v_trace_twohot, cal_hier_log_probs, rew_vec_to_scaled_scalar, cross_entropy_loss, Normalizier
+
+
+Symlog = Normalizier.symlog
+TwohotDecoding = Normalizier.twohot_decoding
+TwohotEncoding = Normalizier.twohot_encoding
 
 
 async def learning(parent, timer: ExecutionTimer):
@@ -48,19 +55,23 @@ async def learning(parent, timer: ExecutionTimer):
                         )
                         with torch.no_grad():
                             # V-trace를 사용하여 off-policy corrections 연산
-                            ratio, advantages, values_target = compute_v_trace(
+                            ratio, advantages, values_target = compute_v_trace_twohot(
                                 behav_log_probs=behav_log_probs,
                                 target_log_probs=log_probs,
                                 is_fir=is_fir,
                                 rewards=rew_sca,
                                 values=value,
                                 gamma=parent.args.gamma,
+                                twohot_decoding=partial(TwohotDecoding, bins=parent.model.bins)
                             )
-
+                            # values_target_twohot = TwohotEncoding(Symlog(values_target[:, :-1]), parent.model.bins)
+                            values_target_twohot = TwohotEncoding(values_target[:, :-1], parent.model.bins)
+                            
                         loss_policy = -(log_probs[:, :-1] * advantages).mean()
-                        loss_value = F.smooth_l1_loss(
-                            value[:, :-1], values_target[:, :-1]
-                        ).mean()
+                        # loss_value = F.smooth_l1_loss(
+                        #     value[:, :-1], values_target[:, :-1]
+                        # ).mean()
+                        loss_value = cross_entropy_loss(value[:, :-1], values_target_twohot)
                         policy_entropy = entropy[:, :-1].mean()
 
                         loss = (

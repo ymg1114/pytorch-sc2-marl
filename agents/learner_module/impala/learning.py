@@ -12,13 +12,16 @@ from ..compute_loss import compute_v_trace_twohot, cal_hier_log_probs, rew_vec_t
 
 
 Symlog = Normalizier.symlog
+NormReturns = Normalizier.norm_returns
+CalculateScale = Normalizier.calculate_s
 TwohotDecoding = Normalizier.twohot_decoding
 TwohotEncoding = Normalizier.twohot_encoding
 
 
 async def learning(parent, timer: ExecutionTimer):
     assert hasattr(parent, "batch_queue")
-
+    scale = parent.scale # 초기화
+    
     while not parent.stop_event.is_set():
         batch_dict = None
         with timer.timer("learner-throughput", check_throughput=True):
@@ -66,7 +69,10 @@ async def learning(parent, timer: ExecutionTimer):
                             )
                             # values_target_twohot = TwohotEncoding(Symlog(values_target[:, :-1]), parent.model.bins)
                             values_target_twohot = TwohotEncoding(values_target[:, :-1], parent.model.bins)
-                            
+
+                            scale = CalculateScale(advantages, previous_s=scale)
+                            advantages = NormReturns(advantages, scale)
+
                         loss_policy = -(log_probs[:, :-1] * advantages).mean()
                         # loss_value = F.smooth_l1_loss(
                         #     value[:, :-1], values_target[:, :-1]
@@ -84,6 +90,7 @@ async def learning(parent, timer: ExecutionTimer):
                             "policy-loss": loss_policy.detach().cpu(),
                             "value-loss": loss_value.detach().cpu(),
                             "policy-entropy": policy_entropy.detach().cpu(),
+                            "scale": scale.item(),
                             "ratio": ratio.detach().cpu(),
                         }
 
@@ -115,7 +122,8 @@ async def learning(parent, timer: ExecutionTimer):
                     torch.save(
                         {
                             "model_state": parent.model.state_dict(),
-                            "log_idx": parent.idx
+                            "log_idx": parent.idx,
+                            "scale": scale,
                         },           
                         os.path.join(
                             parent.args.model_dir, f"{parent.args.algo}_{parent.idx}.pt"

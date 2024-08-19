@@ -67,12 +67,14 @@ class LearnerBase(SMInterface):
         
         self.device = self.args.device
         self.idx = 0
+        self.scale = None
         
         self.model: "ModelSingle" = model_cls(self.args, self.env_space).to(self.device)
         out_dict = model_cls.set_model_weight(self.args, self.device)
         if out_dict is not None:
             self.model.load_state_dict(out_dict["state_dict"])
             self.idx = out_dict["log_idx"]
+            self.scale = out_dict["scale"]
             
         # self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
         self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr, eps=1e-5)
@@ -138,6 +140,11 @@ class LearnerBase(SMInterface):
             )
             self.writer.add_scalar(
                 "avg-ratio", detached_losses["ratio"].mean(), self.idx
+            )
+
+        if "scale" in detached_losses:
+            self.writer.add_scalar(
+                "actor-loss-eval-scale", detached_losses["scale"], self.idx
             )
 
         if "loss-temperature" in detached_losses:

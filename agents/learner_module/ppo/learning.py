@@ -10,13 +10,16 @@ from ..compute_loss import compute_gae, cal_hier_log_probs, rew_vec_to_scaled_sc
 
 
 Symlog = Normalizier.symlog
+NormReturns = Normalizier.norm_returns
+CalculateScale = Normalizier.calculate_s
 TwohotDecoding = Normalizier.twohot_decoding
 TwohotEncoding = Normalizier.twohot_encoding
 
 
 async def learning(parent, timer: ExecutionTimer):
     assert hasattr(parent, "batch_queue")
-
+    scale = parent.scale # 초기화
+    
     while not parent.stop_event.is_set():
         batch_dict = None
         with timer.timer("learner-throughput", check_throughput=True):
@@ -66,7 +69,10 @@ async def learning(parent, timer: ExecutionTimer):
                             gae = compute_gae(
                                 delta, parent.args.gamma, parent.args.lmbda
                             )  # ppo-gae (advantage)
-
+                            
+                            scale = CalculateScale(gae, previous_s=scale)
+                            gae = NormReturns(gae, scale)
+                            
                         ratio = torch.exp(
                             log_probs[:, :-1] - behav_log_probs[:, :-1]
                         )  # a/b == exp(log(a)-log(b))
@@ -96,6 +102,7 @@ async def learning(parent, timer: ExecutionTimer):
                             "policy-loss": loss_policy.detach().cpu(),
                             "value-loss": loss_value.detach().cpu(),
                             "policy-entropy": policy_entropy.detach().cpu(),
+                            "scale": scale.item(),
                             "ratio": ratio.detach().cpu(),
                         }
 
@@ -127,7 +134,8 @@ async def learning(parent, timer: ExecutionTimer):
                     torch.save(
                         {
                             "model_state": parent.model.state_dict(),
-                            "log_idx": parent.idx
+                            "log_idx": parent.idx,
+                            "scale": scale,
                         },           
                         os.path.join(
                             parent.args.model_dir, f"{parent.args.algo}_{parent.idx}.pt"

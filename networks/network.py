@@ -86,7 +86,8 @@ class ModelSingle(nn.Module):
         if prev_model is not None:
             out_dict = {
                 "state_dict": {k: v.to(device) for k, v in prev_model["model_state"].items()},
-                "log_idx": prev_model["log_idx"]
+                "log_idx": prev_model["log_idx"],
+                "scale": prev_model["scale"],
             }
             return out_dict
         return

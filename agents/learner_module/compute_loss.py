@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -166,6 +167,9 @@ def rew_vec_to_scaled_scalar(rew_dict):
 
 
 class Normalizier():
+    """참고, DreamerV3: https://arxiv.org/pdf/2301.04104
+    """
+    
     def symlog(x):
         return torch.sign(x) * torch.log(torch.abs(x) + 1)
 
@@ -235,3 +239,50 @@ class Normalizier():
         twohot_vector.scatter_(-1, upper_bin, upper_weight)
 
         return twohot_vector
+
+    def norm_returns(returns, s):
+        return returns / max(1, s.item())
+    
+    def calculate_s(
+        returns: torch.Tensor,
+        alpha: float = 0.99,
+        previous_s: Optional[torch.Tensor] = None,
+        q_high: float = 0.95,
+        q_low: float = 0.05
+    ) -> torch.Tensor:
+        """
+        Calculate the normalization factor "s" using the q_low th and q_high th percentile of returns.
+        This function applies an exponential moving average (EMA) to smooth the value of s.
+        
+        Args:
+            returns (torch.Tensor): Tensor of shape (Batch, Sequence, 1) containing the return estimates.
+            alpha (float): Smoothing factor for the exponential moving average (EMA decay).
+            previous_s (Optional[torch.Tensor]): Previous value of s for EMA. If None, this is the first iteration.
+            q_high (float): Upper quantile for normalization (default is 0.95).
+            q_low (float): Lower quantile for normalization (default is 0.05).
+            
+        Returns:
+            torch.Tensor: The normalization factor s (a scalar tensor).
+        """
+        
+        # Remove the last dimension to calculate percentiles across the Batch
+        returns = returns.squeeze(-1)  # Shape: (Batch, Sequence)
+
+        # Calculate the specified upper and lower percentiles along the batch dimension
+        upper = torch.quantile(returns, q_high, dim=0)  # Shape: (Sequence,)
+        lower = torch.quantile(returns, q_low, dim=0)   # Shape: (Sequence,)
+
+        # Compute the difference between the percentiles
+        diff = upper - lower  # Shape: (Sequence,)
+
+        # Calculate the current s value as the mean of the differences across the sequence
+        s_current = diff.mean()  # Scalar value
+
+        # If previous_s is None, this is the first iteration
+        if previous_s is None:
+            return s_current
+
+        # Apply the modified EMA to favor the current s more
+        s = (1 - alpha) * previous_s + alpha * s_current
+
+        return s

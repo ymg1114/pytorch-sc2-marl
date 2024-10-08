@@ -8,7 +8,8 @@ import time
 
 import torch
 import traceback
-import asyncio
+# import asyncio
+import uvloop
 import multiprocessing as mp
 
 from types import SimpleNamespace as SN
@@ -115,7 +116,7 @@ class Runner:
         manager = Manager(
             args, stop_event, manager_ip, learner_ip, manager_port, learner_port, heartbeat,
         )
-        asyncio.run(manager.data_chain())
+        uvloop.run(manager.data_chain())
 
     @staticmethod
     def worker_run(
@@ -124,7 +125,7 @@ class Runner:
         worker = Worker(
             args, model_cls, worker_name, stop_event, manager_ip, learner_ip, manager_port, learner_worker_port, env_space, heartbeat
         )
-        asyncio.run(worker.life_cycle_chain())  # collect rollout
+        uvloop.run(worker.life_cycle_chain())  # collect rollout
 
     @staticmethod
     def test_worker_run(
@@ -156,7 +157,7 @@ class Runner:
             env_space,
             heartbeat,
         )
-        asyncio.run(storage.shared_memory_chain())
+        uvloop.run(storage.shared_memory_chain())
 
     @staticmethod
     def learner_run(
@@ -189,7 +190,7 @@ class Runner:
         learning_chain = learning_chain_switcher.get(
             args.algo, lambda: AssertionError(ErrorComment)
         )
-        asyncio.run(learning_chain())
+        uvloop.run(learning_chain())
 
     @register
     def manager_sub_process(self, manager_ip, learner_ip, manager_port, learner_port):

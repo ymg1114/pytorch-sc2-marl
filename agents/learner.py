@@ -230,10 +230,11 @@ class LearnerBase(SMInterface):
     async def put_batch_to_batch_q(self):
         while not self.stop_event.is_set():
             if self.is_sh_ready():
-                batch_dict = self.sample_batch_from_sh_memory()
-                await self.batch_queue.put(batch_dict)
-                self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
-                print("batch is ready !")
+                with self.mutex.lock():
+                    batch_dict = self.sample_batch_from_sh_memory()
+                    await self.batch_queue.put(batch_dict)
+                    self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
+                    print("batch is ready !")
 
             await asyncio.sleep(0.001)
 

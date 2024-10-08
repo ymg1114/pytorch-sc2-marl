@@ -34,8 +34,13 @@ class SMInterface:
     def __init__(self, shm_ref, env_space):
         self.shm_ref = shm_ref
         self.env_space = env_space
-        self.shared_memory_spaces = list(env_space.keys()) # ["obs", "act", "rew", "info"]
-        self.sh_data_num: mp.Value = self.shm_ref.get("batch_index")
+        self.shared_memory_spaces = list(env_space.keys()) # ["obs", "act", "rew", "info", "others"]
+        
+        # TODO: 좋은 코드는 아님..
+        assert "others" in self.shared_memory_spaces
+        self.shared_memory_spaces.remove("others")
+        
+        self.sh_data_num = self.shm_ref.get("batch_index")
         
     def shm_ndarray_interface(self, name: str):
         assert name in self.shm_ref, f"{name} not found in shared memory reference"

@@ -13,7 +13,7 @@ from rewarder.rewarder import Rewarder, REWARD_PARAM
 from observer.observer import Observer
 
 # from gymnasium.spaces import Dict
-from env.env_proxy import EnvSpace, ObservationSpace, ActionSpace, RewardSpace, InfoSpace, MultiDiscreteSpaceDim as MDSD
+from env.env_proxy import EnvSpace, ObservationSpace, ActionSpace, RewardSpace, InfoSpace, OthersSpace, MultiDiscreteSpaceDim as MDSD, TextSpaceDim as TSD
 
 from utils.utils import *
 
@@ -40,13 +40,13 @@ class WrapperSC2Env(StarCraft2Env):
         # MOVE 행동은 해당 움직임의 방향 인덱스로 변경
         # NO_OP, STOP 2개 행동 이후부터 4개 -> MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST
         move_idx = np.where(act_sampled == MOVE_IDX)
-        act_dict["on_select_move"][move_idx] = 1.0
+        act_dict["on_select_move"][move_idx] = 1.0 # 선택했음을 알려줌
         actions[move_idx] = move_sampled[move_idx] + 2 # 실제 행동 인덱스에 맞추기 위해 shift
 
         # TARGET 행동은 해당 유닛 인덱스로 변경
         # NO_OP, STOP, MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST 6개 행동 이후부터 나머지
         tar_idx = np.where(act_sampled == TARGET_IDX)
-        act_dict["on_select_target"][tar_idx] = 1.0
+        act_dict["on_select_target"][tar_idx] = 1.0 # 선택했음을 알려줌
         actions[tar_idx] = target_sampled[tar_idx] + 6 # 실제 행동 인덱스에 맞추기 위해 shift
 
         return actions
@@ -90,7 +90,7 @@ class WrapperSC2Env(StarCraft2Env):
                 self.zergling_id: 8,
                 self.baneling_id: 8,
                 self.hydralisk_id: 9,
-                self.marine_id: 9,
+                self.marine_id: 9, # TODO 이 값으로 거리 개념의 feat를 나눠 버림 (Normalize)
                 self.marauder_id: 10,
                 self.medivac_id: 11,
                 1970: 9, # TODO: 버그 대응. 유닛 타입 1970 (마린)의 시야 범위를 추가 (필요에 따라 수정)
@@ -244,12 +244,12 @@ class WrapperSMAC2(StarCraftCapabilityEnvWrapper):
         # _avail = _obs.avail
         B = args.batch_size
         S = args.seq_len
-        
+
         env_space = EnvSpace(
             obs=ObservationSpace(
-                obs_mine=MDSD(nvec=(B, S, _obs.move_feats_dim + _obs.own_feats_dim)),
-                obs_ally=MDSD(nvec=(B, S, _obs.ally_feats_dim[0] * _obs.ally_feats_dim[1])),
-                obs_enemy=MDSD(nvec=(B, S, _obs.enemy_feats_dim[0] * _obs.enemy_feats_dim[1])),
+                obs_mine=MDSD(nvec=(B, S, len(_obs.mine_feats_names))),
+                obs_ally=MDSD(nvec=(B, S, len(_obs.ally_feats_names))),
+                obs_enemy=MDSD(nvec=(B, S, len(_obs.enemy_feats_names))),
                 avail_act=MDSD(nvec=(B, S, _obs.dim_act)),
                 avail_move=MDSD(nvec=(B, S, _obs.dim_move)),
                 avail_target=MDSD(nvec=(B, S, _obs.dim_target)),
@@ -272,6 +272,13 @@ class WrapperSMAC2(StarCraftCapabilityEnvWrapper):
             ),
             info=InfoSpace(
                 is_fir=MDSD(nvec=(B, S, 1))
+            ),
+            others=OthersSpace(
+                mine_feats_names=TSD(names=_obs.mine_feats_names),
+                ally_feats_names=TSD(names=_obs.ally_feats_names),
+                enemy_feats_names=TSD(names=_obs.enemy_feats_names),
+                num_allys=_obs.n_allies,
+                num_enemys=_obs.n_enemies,
             )
         )
         return env_space.to_gym_space()

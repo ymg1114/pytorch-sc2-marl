@@ -10,6 +10,32 @@ from torch.distributions.kl import kl_divergence
 from rewarder.rewarder import REWARD_PARAM
 
 
+def append_loss(trg_loss, src_loss=None):
+    if src_loss is None:
+        return trg_loss
+    
+    if not torch.isnan(trg_loss).any():
+        return src_loss + trg_loss
+    return src_loss
+
+
+def goal_curr_alive_mine_mask(obs_dict, env_space):
+    obs_mine = obs_dict["obs_mine"][:, 1:] # next-obs 개념
+    obs_ally = obs_dict["obs_ally"][:, 1:]
+    obs_enemy = obs_dict["obs_enemy"][:, 1:]
+    
+    curr_obs_mine = obs_dict["obs_mine"][:, :-1] # current-obs 개념
+    mine_feats_names = env_space["others"]["mine_feats_names"]
+
+    assert obs_mine.shape[:-1] == obs_ally.shape[:-1] == obs_enemy.shape[:-1] == (B, S_)
+    
+    # current 기준, 살아있는 나 (mine) 여부 확인, Shape: [Batch, Seq]
+    curr_mine_health = curr_obs_mine[..., mine_feats_names.index('own_health')]
+    valid_mine_mask = curr_mine_health > 0  # current 기준, 살아있는 나 (mine) 여부 확인
+
+    return valid_mine_mask.unsqueeze(-1)
+
+
 def compute_gae(
     deltas,
     gamma,
@@ -18,8 +44,7 @@ def compute_gae(
     gae = 0
     returns = []
     for t in reversed(range(deltas.size(1))):
-        d = deltas[:, t]
-        gae = d + gamma * lambda_ * gae
+        gae = deltas[:, t] + gamma * lambda_ * gae
         returns.insert(0, gae)
 
     return torch.stack(returns, dim=1)
@@ -137,7 +162,8 @@ def cal_log_probs(logit, sampled, on_select):
 
 def cross_entropy_loss(logits, targets):
     log_probs = torch.log_softmax(logits, dim=-1)
-    return -torch.mean(torch.sum(targets.detach() * log_probs, dim=-1))
+    # return -torch.mean(torch.sum(targets.detach() * log_probs, dim=-1))
+    return -torch.sum(targets.detach() * log_probs, dim=-1)
 
 
 def cal_hier_log_probs(act_dict):

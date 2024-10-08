@@ -8,7 +8,7 @@ from functools import partial
 
 from utils.utils import ExecutionTimer
 
-from ..compute_loss import compute_v_trace_twohot, cal_hier_log_probs, rew_vec_to_scaled_scalar, cross_entropy_loss, Normalizier
+from ..compute_loss import goal_curr_alive_mine_mask, append_loss, compute_v_trace_twohot, cal_hier_log_probs, rew_vec_to_scaled_scalar, cross_entropy_loss, Normalizier
 
 
 Symlog = Normalizier.symlog
@@ -72,20 +72,17 @@ async def learning(parent, timer: ExecutionTimer):
 
                             scale = CalculateScale(advantages, previous_s=scale)
                             advantages = NormReturns(advantages, scale)
+                            valid_mine_mask = goal_curr_alive_mine_mask(obs_dict, env_space=parent.actor.env_space)
+ 
+                        loss_policy = -(log_probs[:, :-1] * advantages)[valid_mine_mask].mean()
+                        # loss_value = F.smooth_l1_loss(value[:, :-1], td_target).mean()
+                        loss_value = cross_entropy_loss(value[:, :-1], values_target_twohot)[valid_mine_mask.squeeze(-1)].mean()
+                        policy_entropy = entropy[:, :-1][valid_mine_mask].mean()
 
-                        loss_policy = -(log_probs[:, :-1] * advantages).mean()
-                        # loss_value = F.smooth_l1_loss(
-                        #     value[:, :-1], values_target[:, :-1]
-                        # ).mean()
-                        loss_value = cross_entropy_loss(value[:, :-1], values_target_twohot)
-                        policy_entropy = entropy[:, :-1].mean()
-
-                        loss = (
-                            parent.args.policy_loss_coef * loss_policy
-                            + parent.args.value_loss_coef * loss_value
-                            - parent.args.entropy_coef * policy_entropy
-                        )
-
+                        loss = append_loss(parent.args.policy_loss_coef * loss_policy)
+                        loss = append_loss(parent.args.value_loss_coef * loss_value, loss)
+                        loss = append_loss(-parent.args.entropy_coef * policy_entropy, loss)
+                        
                         detached_losses = {
                             "policy-loss": loss_policy.detach().cpu(),
                             "value-loss": loss_value.detach().cpu(),

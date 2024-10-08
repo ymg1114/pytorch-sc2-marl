@@ -121,6 +121,7 @@ async def learning(parent, timer: ExecutionTimer):
                             "model_state": parent.model.state_dict(),
                             "log_idx": parent.idx,
                             "scale": scale,
+                            "optim_state_dict": parent.optimizer.state_dict(),
                         },           
                         os.path.join(
                             parent.args.model_dir, f"{parent.args.algo}_{parent.idx}.pt"

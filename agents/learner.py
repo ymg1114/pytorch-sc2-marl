@@ -76,8 +76,11 @@ class LearnerBase(SMInterface):
             self.idx = out_dict["log_idx"]
             self.scale = out_dict["scale"]
             
-        # self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
-        self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr, eps=1e-5)
+        self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
+        # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr, eps=1e-5)
+        if out_dict is not None:
+            self.optimizer.load_state_dict(out_dict["optim_state_dict"])
+            
         self.CT = Categorical
 
         # self.to_gpu = partial(make_gpu_batch, device=self.device)

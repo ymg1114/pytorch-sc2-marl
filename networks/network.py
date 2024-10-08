@@ -88,6 +88,7 @@ class ModelSingle(nn.Module):
                 "state_dict": {k: v.to(device) for k, v in prev_model["model_state"].items()},
                 "log_idx": prev_model["log_idx"],
                 "scale": prev_model["scale"],
+                "optim_state_dict": prev_model["optim_state_dict"],
             }
             return out_dict
         return

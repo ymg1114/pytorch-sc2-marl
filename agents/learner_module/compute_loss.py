@@ -27,7 +27,7 @@ def goal_curr_alive_mine_mask(obs_dict, env_space):
     curr_obs_mine = obs_dict["obs_mine"][:, :-1] # current-obs 개념
     mine_feats_names = env_space["others"]["mine_feats_names"]
 
-    assert obs_mine.shape[:-1] == obs_ally.shape[:-1] == obs_enemy.shape[:-1] == (B, S_)
+    assert obs_mine.shape[:-1] == obs_ally.shape[:-1] == obs_enemy.shape[:-1]
     
     # current 기준, 살아있는 나 (mine) 여부 확인, Shape: [Batch, Seq]
     curr_mine_health = curr_obs_mine[..., mine_feats_names.index('own_health')]

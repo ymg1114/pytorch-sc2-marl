@@ -72,7 +72,7 @@ async def learning(parent, timer: ExecutionTimer):
                             
                             scale = CalculateScale(gae, previous_s=scale)
                             gae = NormReturns(gae, scale)
-                            valid_mine_mask = goal_curr_alive_mine_mask(obs_dict, env_space=parent.actor.env_space)
+                            valid_mine_mask = goal_curr_alive_mine_mask(obs_dict, env_space=parent.env_space)
                             
                         ratio = torch.exp(
                             log_probs[:, :-1] - behav_log_probs[:, :-1]

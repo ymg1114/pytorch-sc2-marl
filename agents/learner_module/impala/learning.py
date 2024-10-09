@@ -72,7 +72,7 @@ async def learning(parent, timer: ExecutionTimer):
 
                             scale = CalculateScale(advantages, previous_s=scale)
                             advantages = NormReturns(advantages, scale)
-                            valid_mine_mask = goal_curr_alive_mine_mask(obs_dict, env_space=parent.actor.env_space)
+                            valid_mine_mask = goal_curr_alive_mine_mask(obs_dict, env_space=parent.env_space)
  
                         loss_policy = -(log_probs[:, :-1] * advantages)[valid_mine_mask].mean()
                         # loss_value = F.smooth_l1_loss(value[:, :-1], td_target).mean()

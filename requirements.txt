@@ -1,17 +1,9 @@
-pyzmq
-blosc2
-gymnasium
-gym[atari]
-Box2D
-ale-py
-atari-py
-numpy
-pickle
-opencv-python
 torch
-# torchvision
-tensorboard==2.8.0
-tensorflow==2.8.0
-tensorflow-gpu==2.8.0
-tensorboardX
-smacv2==1.0.0 
+uvloop
+psutil
+blosc2
+zmq
+git+https://github.com/oxwhirl/smacv2.git
+gymnasium
+smac
+tensorboard

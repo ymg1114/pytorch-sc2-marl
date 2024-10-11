@@ -228,7 +228,7 @@ class LearnerBase(SMInterface):
                 
             await self.stat_q.put(data)
             print("stat-data is received !")
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(1e-4)
 
     async def put_batch_to_batch_q(self):
         while not self.stop_event.is_set():
@@ -239,7 +239,7 @@ class LearnerBase(SMInterface):
                     self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
                     print("batch is ready !")
 
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(1e-4)
 
     async def learning_chain_ppo(self):
         self.batch_queue = asyncio.Queue(1024)

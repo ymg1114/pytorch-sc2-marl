@@ -39,7 +39,7 @@ class Manager:
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             await self.data_q.put((protocol, data))
             
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(1e-4)
 
     async def pub_data(self):
         while not self.stop_event.is_set():
@@ -52,7 +52,7 @@ class Manager:
             await self.pub_socket.send_multipart(
                 [*encode(Protocol.Rollout, data)]
             )
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(1e-4)
 
     async def data_chain(self):
         self.data_q = asyncio.Queue(1024)

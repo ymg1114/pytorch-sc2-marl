@@ -72,7 +72,7 @@ class LearnerStorage(SMInterface):
                 self.heartbeat.value = time.monotonic()
             
             await self.rollout_assembler.push(data)
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(1e-4)
 
     async def build_as_batch(self):
         while not self.stop_event.is_set():
@@ -82,7 +82,7 @@ class LearnerStorage(SMInterface):
                 self.make_batch(trajectory)
             print("trajectory is poped !")
 
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(1e-4)
 
     def make_batch(self, trajectory):
         Bat = self.args.batch_size

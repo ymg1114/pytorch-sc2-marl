@@ -6,6 +6,7 @@ import asyncio
 
 # import torch.nn.functional as F
 # import multiprocessing as mp
+import torch.jit as jit
 import numpy as np
 from collections import defaultdict, deque
 from torch.distributions import Categorical, Uniform
@@ -69,7 +70,9 @@ class LearnerBase(SMInterface):
         self.idx = 0
         self.scale = None
         
-        self.model: "ModelSingle" = model_cls(self.args, self.env_space).to(self.device)
+        model: "ModelSingle" = model_cls(self.args, self.env_space)
+        self.model = jit.script(model).to(self.device)
+        
         out_dict = model_cls.set_model_weight(self.args, self.device)
         if out_dict is not None:
             self.model.load_state_dict(out_dict["state_dict"])

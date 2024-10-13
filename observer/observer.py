@@ -162,7 +162,7 @@ class Observer():
 
     def get(self):
         out_dict = {
-            **self.avail.get_avail(),
-            **self.get_obs(),
+            **self.get_obs(), # obs_mine, obs_ally, obs_enemy
+            **self.avail.get_avail(), # avail_act, avail_move, avail_target
         }
         return out_dict

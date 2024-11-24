@@ -1,14 +1,31 @@
 import numpy as np
 import multiprocessing as mp
-
+from multiprocessing.shared_memory import SharedMemory
 from utils.utils import mul
 
 
-def set_shared_memory(shm_ref, key, ndarray):
+def create_or_reset_shared_memory(name, size):
+    # 기존에 동일한 이름의 공유 메모리가 있다면 해제
+    try:
+        existing_shm = SharedMemory(name=name)
+        existing_shm.unlink()  # 기존 공유 메모리 해제
+        existing_shm.close()   # 공유 메모리 객체 닫기
+        print(f"Shared memory '{name}' was unlinked.")
+    except FileNotFoundError:
+        print(f"Shared memory '{name}' does not exist. Creating new one.")
+    
+    # 새로 공유 메모리 생성
+    shm = SharedMemory(name=name, create=True, size=size)
+    return shm
+
+
+def set_shared_memory(shm_ref, key, ndarray: np.ndarray):
     """멀티프로세싱 환경에서 데이터 복사 없이 공유 메모리를 통해 데이터를 공유함으로써 성능을 개선할 수 있음."""
 
+    # shm_ary = mp.Array("f", len(ndarray))
+    shm_ary = create_or_reset_shared_memory(key, ndarray.nbytes)
     shm_ref.update(
-        {key: (mp.Array("f", len(ndarray)), np.float32)}
+        {key: (shm_ary, ndarray.dtype)}
     )  # {키워드: (공유메모리, 타입), ... }
 
 
@@ -50,7 +67,8 @@ class SMInterface:
         shm_array, dtype = shm_memory_tuple
         
         # 공유 메모리 객체에서 실제 버퍼를 가져와, ndarray 배열로 변환 (생성)
-        return np.frombuffer(buffer=shm_array.get_obj(), dtype=dtype, count=-1)
+        # return np.frombuffer(buffer=shm_array.get_obj(), dtype=dtype, count=-1)
+        return np.frombuffer(buffer=shm_array.buf, dtype=dtype, count=-1)
 
     def get_shared_memory_interface(self):
         for space in self.shared_memory_spaces:

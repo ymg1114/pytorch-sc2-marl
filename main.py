@@ -261,7 +261,7 @@ class Runner:
     def learner_sub_process(self, learner_ip, learner_worker_port, *learner_ports):
         # 1개의 Learner, 여러개의 Storage에서 공유하는 자료형
         mutex = Mutex() # 동기화를 위한 잠금장치
-        shm_ref = setup_shared_memory(self.env_space) # 학습을 위한 공유메모리 확보
+        self.shm_ref = setup_shared_memory(self.env_space) # 학습을 위한 공유메모리 확보
 
         for learner_port in learner_ports:
             heartbeat = mp.Value("f", time.monotonic())
@@ -271,7 +271,7 @@ class Runner:
                 "args": (
                     self.args,
                     mutex,
-                    shm_ref,
+                    self.shm_ref,
                     self.stop_event,
                     learner_ip,
                     learner_port,
@@ -299,7 +299,7 @@ class Runner:
                 self.LearnerCls,
                 self.args,
                 mutex,
-                shm_ref,
+                self.shm_ref,
                 self.stop_event,
                 learner_ip,
                 learner_worker_port,
@@ -434,7 +434,14 @@ class Runner:
             
         finally:
             traceback.print_exc(limit=128)
-
+            
+            from multiprocessing.shared_memory import SharedMemory
+            if hasattr(self, "shm_ref"):
+                for k, v in self.shm_ref.items():
+                    if isinstance(v, tuple) and isinstance(v[0], SharedMemory):
+                        v[0].unlink()
+                        v[0].close()
+                    
             err, log_dir = Runner.extract_err(func_name)
             SaveErrorLog(err, log_dir)
             

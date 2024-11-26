@@ -145,44 +145,46 @@ class LearnerStorageMulti(LearnerStorageBase):
     def make_batch(self, trajectory):
         Bat = self.args.batch_size
 
-        success = False  # 공유메모리 인터페이스 접근 성공 여부 플래그
-        while not success:
-            with self.lock_manager.Lock():
-                try:
-                    with self.lock_manager.acquire_next_available_lock_and_shm(max_retries=5, retry_interval=0.1) as shm_inf:
-                        if shm_inf.sh_data_num.value < Bat:
-                            N = shm_inf.sh_data_num.value
-                            
-                            def _acquire(key, value):
-                                assert hasattr(shm_inf, f"sh_{key}")
-                                assert key in trajectory
-                                
-                                B, S, D = value.nvec # Batch, Sequence, Dim
-                                assert B == Bat
-                                
-                                _T = trajectory[key]
-                                assert _T.shape == (S, D)
-                                return flatten(_T)
-
-                            def _update_shared_memory(space):
-                                """공유 메모리에 쓰기 작업 수행. Lock을 도입해
-                                데이터 무결성 확보
-                                """
-                                
-                                for k, v in space.items():
-                                    B, S, D = v.nvec # Batch, Sequence, Dim
-                                    getattr(shm_inf, f"sh_{k}")[S*N*D: S*(N+1)*D] = _acquire(k, v)
-                                    
-                            _update_shared_memory(self.env_space["obs"])
-                            _update_shared_memory(self.env_space["act"])
-                            _update_shared_memory(self.env_space["rew"])
-                            _update_shared_memory(self.env_space["info"])
-                            
-                            with shm_inf.sh_data_num.get_lock(): 
-                                shm_inf.sh_data_num.value += 1
+        # success = False  # 공유메모리 인터페이스 접근 성공 여부 플래그
+        # while not success:
+        with self.lock_manager.Lock():
+            # try:
+            with self.lock_manager.acquire_next_available_lock_and_shm(retry_interval=0.05) as shm_inf:
+                if shm_inf.sh_data_num.value < Bat:
+                    N = shm_inf.sh_data_num.value
                     
-                        success = True  # 접근 성공 시 루프 종료
+                    def _acquire(key, value):
+                        assert hasattr(shm_inf, f"sh_{key}")
+                        assert key in trajectory
                         
-                except RuntimeError as e:
-                    # print(f"Task {task_id}: {e}")
-                    time.sleep(0.1)  # 재시도 대기
+                        B, S, D = value.nvec # Batch, Sequence, Dim
+                        assert B == Bat
+                        
+                        _T = trajectory[key]
+                        assert _T.shape == (S, D)
+                        return flatten(_T)
+
+                    def _update_shared_memory(space):
+                        """공유 메모리에 쓰기 작업 수행. Lock을 도입해
+                        데이터 무결성 확보
+                        """
+                        
+                        for k, v in space.items():
+                            B, S, D = v.nvec # Batch, Sequence, Dim
+                            getattr(shm_inf, f"sh_{k}")[S*N*D: S*(N+1)*D] = _acquire(k, v)
+                            
+                    _update_shared_memory(self.env_space["obs"])
+                    _update_shared_memory(self.env_space["act"])
+                    _update_shared_memory(self.env_space["rew"])
+                    _update_shared_memory(self.env_space["info"])
+                    
+                    with shm_inf.sh_data_num.get_lock(): 
+                        shm_inf.sh_data_num.value += 1
+                    
+                        # success = True  # 접근 성공 시 루프 종료
+                        
+            #     except RuntimeError as e:
+            #         # print(f"Task {task_id}: {e}")
+            #         time.sleep(0.1)  # 재시도 대기
+                    
+            # time.sleep(1e-4)

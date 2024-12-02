@@ -20,6 +20,13 @@ In the [machines.json](https://github.com/ymg1114/pytorch-sc2-marl/blob/main/uti
 Additionally, in the Worker machine settings, you need to decide `how many independent worker processes` to use.  
 After all settings are properly configured, you need to run `python run.py`
 
+## C++ Library Build Guide
+Build the library for your system or use pre-built binaries for convenience.
+- Follow the [guide to build](https://github.com/ymg1114/pytorch-sc2-marl/tree/main/observer/cxx_flee_algo) the library from source.
+- Alternatively, pre-built binaries are available:
+  - **Windows**: `*.dll`
+  - **Linux**: `*.so`
+
 ## Training Results
 `num_worker: 30`
 

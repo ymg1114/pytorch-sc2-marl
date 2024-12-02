@@ -1,6 +1,6 @@
 # pytorch-sc2-marl
 ## Architecture of Multi-Agents Distributed Reinforcement Learning
-<img src="https://github.com/user-attachments/assets/f471b1bc-f4da-43b9-893d-cdd8f3811560" width="700">
+<img src="https://github.com/user-attachments/assets/260075c9-57fc-42b2-910e-8e6c3c3328a5" width="700">
 <img src="https://github.com/user-attachments/assets/63b3ad0e-5e14-4bcb-ba66-b1e99c4803af" width="700">
 
 ## Algo

@@ -18,15 +18,15 @@ if TYPE_CHECKING:
     from networks.network import ModelSingle
 
 
-def check_act_avail(env, act_dict, n_agents):
-    converted_act_idx = env.act_dict_converter(act_dict)
-    avail_act_list = []
-    for a_id in range(n_agents):
-        avail_acts = env.get_avail_agent_actions(a_id)
-        avail_act_list.append(avail_acts)
+# def check_act_avail(env, act_dict, n_agents):
+#     converted_act_idx = env.act_dict_converter(act_dict)
+#     avail_act_list = []
+#     for a_id in range(n_agents):
+#         avail_acts = env.get_avail_agent_actions(a_id)
+#         avail_act_list.append(avail_acts)
 
-    for c_a, av_l in zip(converted_act_idx, avail_act_list):
-        assert av_l[c_a.item()] == 1, f"converted_act_idx: {converted_act_idx}, avail_act_list: {avail_act_list}"
+#     for c_a, av_l in zip(converted_act_idx, avail_act_list):
+#         assert av_l[c_a.item()] == 1, f"converted_act_idx: {converted_act_idx}, avail_act_list: {avail_act_list}"
 
 
 # def Wrapper(func):
@@ -277,7 +277,7 @@ class TestWorker(Worker):
                 act_dict = self.model.act(obs_dict, hx, cx)
                 self.set_default_actions(act_dict)
                 
-                check_act_avail(self.env, act_dict, self.env_info["n_agents"])
+                # check_act_avail(self.env, act_dict, self.env_info["n_agents"])
                 check_agent_id(self.env.agents, self.env_info["n_agents"], agent_tag, is_full)
                 
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)

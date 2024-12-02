@@ -1,5 +1,6 @@
 import os, sys
-import io
+# import io
+import ctypes
 import json
 import torch
 import time
@@ -27,14 +28,48 @@ NO_OP_IDX = 0
 STOP_IDX = 1
 MOVE_IDX = 2
 TARGET_IDX = 3
+FLEE_IDX = 4
 
 MOVE_NORTH_IDX = 2
 MOVE_SOUTH_IDX = 3
 MOVE_EAST_IDX = 4
 MOVE_WEST_IDX = 5
 
-ACT = [NO_OP_IDX, STOP_IDX, MOVE_IDX, TARGET_IDX] # no-op, stop, move, target
+ACT = [NO_OP_IDX, STOP_IDX, MOVE_IDX, TARGET_IDX, FLEE_IDX ] # no-op, stop, move, target, flee
 MOVE = [MOVE_NORTH_IDX, MOVE_SOUTH_IDX, MOVE_EAST_IDX, MOVE_WEST_IDX]
+
+
+# Determine the library name based on the platform
+if sys.platform.startswith("win"):
+    lib_name = Path("observer") / "cxx_flee_algo" / "lib_win" / "FleeAlgorithm.dll"
+else:
+    assert sys.platform == "linux", f"running platform is '{sys.platform}'"
+    lib_name = Path("observer") / "cxx_flee_algo" / "lib_linux" / "libFleeAlgorithm.so"
+
+# Load the shared library
+lib = ctypes.CDLL(str(lib_name))
+
+# Define Position struct
+class Position(ctypes.Structure):
+    _fields_ = [("y", ctypes.c_int), ("x", ctypes.c_int)]
+
+# Define the function prototype
+lib.compute_flee_positions.argtypes = [
+    ctypes.c_int,  # n_ally
+    ctypes.c_int,  # n_enemy
+    ctypes.c_int,  # n_rows
+    ctypes.c_int,  # n_cols
+    ctypes.POINTER(ctypes.POINTER(ctypes.c_int)),  # grid_maps
+    ctypes.POINTER(ctypes.c_bool),  # alive_allies
+    ctypes.POINTER(ctypes.c_bool),  # alive_enemies
+    ctypes.POINTER(Position),  # positions_allies
+    ctypes.POINTER(Position),  # positions_enemies
+    ctypes.c_int,  # min_search_length
+    ctypes.c_int,  # max_search_length
+    ctypes.c_float,  # ally_weight
+    ctypes.c_float,  # enemy_weight
+    ctypes.POINTER(Position),  # flee_positions (output)
+]
 
 
 def dict_to_simplenamespace(d):

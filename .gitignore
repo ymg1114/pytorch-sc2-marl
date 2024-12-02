@@ -3,8 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# C extensions
-*.so
+# .so 파일은 포함
+# # C extensions
+# *.so
 
 # vscode config
 .vscode/
@@ -165,3 +166,6 @@ cython_debug/
 # 학습 결과 기록 관련
 results/*
 logs/*
+
+# 그림 파일은 포함하지 않음
+**/*.png

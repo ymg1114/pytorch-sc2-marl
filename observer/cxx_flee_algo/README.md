@@ -26,6 +26,6 @@ cmake --build . --config Release
 - Returns the optimal "flee" target position for the agent.
 
 
-## Example: `python -m observer.cxx_flee_algo.test`, [test.py](https://github.com/ymg1114/pytorch-sc2-marl/blob/main/observer/cxx_flee_algo/test.py)
+## Examples: `python -m observer.cxx_flee_algo.test`, [test.py](https://github.com/ymg1114/pytorch-sc2-marl/blob/main/observer/cxx_flee_algo/test.py)
 - ![output_3](https://github.com/user-attachments/assets/cae0ed24-4813-4b11-9177-7fda1baed373)
 - ![output_4](https://github.com/user-attachments/assets/799ee435-a6f5-4943-9793-3ad1afdb6da3)

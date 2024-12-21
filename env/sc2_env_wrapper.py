@@ -7,8 +7,6 @@ from smacv2.env.starcraft2.wrapper import StarCraftCapabilityEnvWrapper
 from pysc2.lib import protocol
 from absl import logging
 
-from s2clientprotocol import sc2api_pb2 as sc_pb
-
 from rewarder.rewarder import Rewarder, REWARD_PARAM
 from observer.observer import Observer
 
@@ -17,10 +15,17 @@ from env.env_proxy import EnvSpace, ObservationSpace, ActionSpace, RewardSpace, 
 
 from utils.utils import *
 
+from s2clientprotocol import common_pb2 as sc_common
+from s2clientprotocol import sc2api_pb2 as sc_pb
+from s2clientprotocol import raw_pb2 as r_pb
+
 
 class WrapperSC2Env(StarCraft2Env):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # TODO: 임시, FLEE 행동 대처
+        self.n_actions += 1
+        
         self.rewarder = Rewarder(self)
         self.observer = Observer(self)
 
@@ -29,7 +34,8 @@ class WrapperSC2Env(StarCraft2Env):
         move_sampled = act_dict["move_sampled"].numpy()
         target_sampled = act_dict["target_sampled"].numpy()
         assert act_sampled.shape == move_sampled.shape == target_sampled.shape
-
+        assert self.n_actions_no_attack == 6
+        
         # 초기화
         actions = np.zeros_like(act_sampled)
 
@@ -47,8 +53,12 @@ class WrapperSC2Env(StarCraft2Env):
         # NO_OP, STOP, MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST 6개 행동 이후부터 나머지
         tar_idx = np.where(act_sampled == TARGET_IDX)
         act_dict["on_select_target"][tar_idx] = 1.0 # 선택했음을 알려줌
-        actions[tar_idx] = target_sampled[tar_idx] + 6 # 실제 행동 인덱스에 맞추기 위해 shift
+        actions[tar_idx] = target_sampled[tar_idx] + self.n_actions_no_attack  # 실제 행동 인덱스에 맞추기 위해 shift
 
+        # TODO: FLEE 행동은 -1번 인덱스 행동으로 임의로 맵핑 (신경망 logits 레벨에서는 4번)
+        flee_idx = np.where(act_sampled == FLEE_IDX)
+        actions[flee_idx] = -1
+        
         return actions
 
     def unit_shoot_range(self, agent_id):
@@ -100,8 +110,45 @@ class WrapperSC2Env(StarCraft2Env):
         else:
             return 9
 
+    def get_agent_action(self, a_id, action):
+        """TODO: FLEE 행동을 -1번 인덱스에 맵핑하고, 나머지 기존 행동들은 SC2 환경에서 제공하는 것을 그대로 사용하기 위함
+        """
+        
+        if action == -1:
+            unit = self.get_unit_by_id(a_id)
+            # tag = unit.tag
+            # x = unit.pos.x
+            # y = unit.pos.y
+
+            flee_target_y = self.observer.avail.flee_positions_np["y"][a_id]
+            flee_target_x = self.observer.avail.flee_positions_np["x"][a_id]
+
+            cmd = r_pb.ActionRawUnitCommand(
+                ability_id=16,  # TODO: 하드코드, "move" / target: PointOrUnit
+                target_world_space_pos=sc_common.Point2D(
+                    x=flee_target_x, 
+                    y=flee_target_y
+                ),
+                unit_tags=[unit.tag],
+                queue_command=False,
+            )
+
+            self.new_unit_positions[a_id] = np.array(
+                [flee_target_x, flee_target_y]
+            )
+
+            sc_action = sc_pb.Action(
+                action_raw=r_pb.ActionRaw(unit_command=cmd)
+            )
+            return sc_action
+        else:
+            return super().get_agent_action(a_id, action)
+        
     def step_dict(self, act_dict, dead_agents_vec):
         """A single environment step. Returns reward, terminated, info."""
+        
+        #TODO: 임시
+        assert self.heuristic_ai == False, f"일단 이 경우만 다룬다. heuristic_ai: {self.heuristic_ai}"
         
         actions_int = [int(a) for a in self.act_dict_converter(act_dict)]
 

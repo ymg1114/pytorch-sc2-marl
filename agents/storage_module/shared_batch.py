@@ -4,10 +4,10 @@ from multiprocessing.shared_memory import SharedMemory
 from utils.utils import mul
 
 
-def create_or_reset_shared_memory(name, size):
+def create_or_reset_shared_memory(name, size, num_p):
     # 기존에 동일한 이름의 공유 메모리가 있다면 해제
     try:
-        existing_shm = SharedMemory(name=name)
+        existing_shm = SharedMemory(name=f"{num_p}_{name}")
         existing_shm.unlink()  # 기존 공유 메모리 해제
         existing_shm.close()   # 공유 메모리 객체 닫기
         print(f"Shared memory '{name}' was unlinked.")
@@ -15,32 +15,32 @@ def create_or_reset_shared_memory(name, size):
         print(f"Shared memory '{name}' does not exist. Creating new one.")
     
     # 새로 공유 메모리 생성
-    shm = SharedMemory(name=name, create=True, size=size)
+    shm = SharedMemory(name=f"{num_p}_{name}", create=True, size=size)
     return shm
 
 
-def set_shared_memory(shm_ref, key, ndarray: np.ndarray):
+def set_shared_memory(shm_ref, key, ndarray: np.ndarray, num_p):
     """멀티프로세싱 환경에서 데이터 복사 없이 공유 메모리를 통해 데이터를 공유함으로써 성능을 개선할 수 있음."""
 
     # shm_ary = mp.Array("f", len(ndarray))
-    shm_ary = create_or_reset_shared_memory(key, ndarray.nbytes)
+    shm_ary = create_or_reset_shared_memory(key, ndarray.nbytes, num_p)
     shm_ref.update(
         {key: (shm_ary, ndarray.dtype)}
     )  # {키워드: (공유메모리, 타입), ... }
 
 
-def initialize_shared_memory(shm_ref, space):
+def initialize_shared_memory(shm_ref, space, num_p):
     for k, v in space.items():
-        set_shared_memory(shm_ref, k, np.zeros(mul(v.nvec), dtype=np.float32))
+        set_shared_memory(shm_ref, k, np.zeros(mul(v.nvec), dtype=np.float32), num_p)
 
 
-def setup_shared_memory(env_space):
+def setup_shared_memory(env_space, num_p):
     shm_ref = {}  # Learner / LearnerStorage 에서 공유할 메모리 주소를 담음
 
-    initialize_shared_memory(shm_ref, env_space["obs"])
-    initialize_shared_memory(shm_ref, env_space["act"])
-    initialize_shared_memory(shm_ref, env_space["rew"])
-    initialize_shared_memory(shm_ref, env_space["info"])
+    initialize_shared_memory(shm_ref, env_space["obs"], num_p)
+    initialize_shared_memory(shm_ref, env_space["act"], num_p)
+    initialize_shared_memory(shm_ref, env_space["rew"], num_p)
+    initialize_shared_memory(shm_ref, env_space["info"], num_p)
 
     # 공유메모리 저장 인덱스
     shm_ref["batch_index"] = mp.Value("i", 0, lock=True) # 0 값 인덱스로 초기화
@@ -58,6 +58,7 @@ class SMInterface:
         self.shared_memory_spaces.remove("others")
         
         self.sh_data_num = self.shm_ref.get("batch_index")
+        self.get_shared_memory_interface()
         
     def shm_ndarray_interface(self, name: str):
         assert name in self.shm_ref, f"{name} not found in shared memory reference"
@@ -80,3 +81,7 @@ class SMInterface:
     def reset_data_num(self):
         with self.sh_data_num.get_lock(): # 락을 사용해 동기화
             self.sh_data_num.value = 0
+            
+    def get_count(self):
+        with self.sh_data_num.get_lock():
+            return self.sh_data_num.value

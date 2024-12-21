@@ -1,7 +1,7 @@
 import numpy as np
 
 from utils.utils import *
-from avail.avail_converter import Avail
+from .avail.avail_converter import Avail
 
 from typing import TYPE_CHECKING
 
@@ -19,9 +19,9 @@ class Observer():
         self.n_enemies = self.env_core.n_enemies # 총 적군 초기 인원수
 
         # TODO: 하드코드 디멘션 구성. SMAC2 원격 기본 환경의 변화에 취약
-        self.dim_act = len(ACT) # no-op, stop, move, target
+        self.dim_act = len(ACT) # no-op, stop, move, target, flee
         self.dim_move = len(MOVE) # north, south, east, west
-        self.dim_target = self.n_actions - 2 - len(MOVE) # max(n_ally, n_enemy)
+        self.dim_target = self.n_actions - 3 - len(MOVE) # max(n_ally, n_enemy)
         assert self.dim_target == max(self.n_agents, self.n_enemies)
 
         self.obs_size = self.env_core.get_obs_size()

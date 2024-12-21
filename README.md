@@ -1,6 +1,6 @@
 # pytorch-sc2-marl
 ## Architecture of Multi-Agents Distributed Reinforcement Learning
-<img src="https://github.com/user-attachments/assets/f471b1bc-f4da-43b9-893d-cdd8f3811560" width="700">
+<img src="https://github.com/user-attachments/assets/260075c9-57fc-42b2-910e-8e6c3c3328a5" width="700">
 <img src="https://github.com/user-attachments/assets/63b3ad0e-5e14-4bcb-ba66-b1e99c4803af" width="700">
 
 ## Algo
@@ -19,6 +19,13 @@ In the [run.py](https://github.com/ymg1114/pytorch-sc2-marl/blob/main/run.py) sc
 In the [machines.json](https://github.com/ymg1114/pytorch-sc2-marl/blob/main/utils/machines.json) configuration file, you need to set the `account`, `IP`, and `port` for the machines to be used as __Learner__, __Manager__, and __Worker__.   
 Additionally, in the Worker machine settings, you need to decide `how many independent worker processes` to use.  
 After all settings are properly configured, you need to run `python run.py`
+
+## C++ Library Build Guide
+Build the library for your system or use pre-built binaries for convenience.
+- Follow the [guide to build](https://github.com/ymg1114/pytorch-sc2-marl/tree/main/observer/cxx_flee_algo) the library from source.
+- Alternatively, pre-built binaries are available:
+  - **Windows**: `*.dll`
+  - **Linux**: `*.so`
 
 ## Training Results
 `num_worker: 30`

@@ -20,5 +20,6 @@
     "lr": 1e-4,
     "max_grad_norm": 0.5,
     "loss_log_interval": 50,
-    "model_save_interval": 100
+    "model_save_interval": 100,
+    "num_shared_buffer": 3
 }

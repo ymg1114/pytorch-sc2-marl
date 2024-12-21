@@ -18,14 +18,16 @@ from multiprocessing import Process
 # from datetime import datetime
 
 from agents.storage_module.shared_batch import (
-    setup_shared_memory,
+    setup_shared_memory
 )
 from agents.learner import (
     LearnerSinglePPO,
     LearnerSingleIMPALA,
+    LearnerMultiPPO,
+    LearnerMultiIMPALA,
 )
 from agents.worker import Worker, TestWorker
-from agents.learner_storage import LearnerStorage
+from agents.learner_storage import LearnerStorageSingle as LSS, LearnerStorageMulti as LSM
 from agents.manager import Manager
 
 from networks.network import (
@@ -43,7 +45,7 @@ from utils.utils import (
     ErrorComment,
     select_least_used_gpu,
 )
-from utils.lock import Mutex
+from utils.lock import Mutex, LockManager
 
 
 fn_dict = {}
@@ -92,8 +94,13 @@ class Runner:
         self.stop_event = mp.Event()
 
         module_switcher = {  # (learner_cls, model_cls)
-            "PPO": SN(learner_cls=LearnerSinglePPO, model_cls=ModelSingle),
-            "IMPALA": SN(learner_cls=LearnerSingleIMPALA, model_cls=ModelSingle),
+            # TODO: LearnerStorageSingle를 사용할 경우
+            # "PPO": SN(learner_cls=LearnerSinglePPO, model_cls=ModelSingle),
+            # "IMPALA": SN(learner_cls=LearnerSingleIMPALA, model_cls=ModelSingle),
+            
+            # TODO: LearnerStorageMulti를 사용할 경우
+            "PPO": SN(learner_cls=LearnerMultiPPO, model_cls=ModelSingle),
+            "IMPALA": SN(learner_cls=LearnerMultiIMPALA, model_cls=ModelSingle),
         }
         module_name_space = module_switcher.get(
             self.args.algo, lambda: AssertionError(ErrorComment)
@@ -141,16 +148,19 @@ class Runner:
         args,
         mutex,
         shm_ref,
+        lock_manager,
         stop_event,
         learner_ip,
         learner_port,
         env_space,
         heartbeat=None,
     ):
-        storage = LearnerStorage(
+        storage = LSM( # TODO: LearnerStorageMulti를 사용할 경우
+        # storage = LSS( # TODO: LearnerStorageSingle를 사용할 경우
             args,
             mutex,
             shm_ref,
+            lock_manager,
             stop_event,
             learner_ip,
             learner_port,
@@ -166,6 +176,7 @@ class Runner:
         args,
         mutex,
         shm_ref,
+        lock_manager,
         stop_event,
         learner_ip,
         learner_worker_port,
@@ -177,6 +188,7 @@ class Runner:
             mutex,
             model_cls,
             shm_ref,
+            lock_manager,
             stop_event,
             learner_ip,
             learner_worker_port,
@@ -259,10 +271,14 @@ class Runner:
 
     @register
     def learner_sub_process(self, learner_ip, learner_worker_port, *learner_ports):
+        # TODO: LearnerStorageSingle를 사용할 경우
         # 1개의 Learner, 여러개의 Storage에서 공유하는 자료형
         mutex = Mutex() # 동기화를 위한 잠금장치
-        self.shm_ref = setup_shared_memory(self.env_space) # 학습을 위한 공유메모리 확보
+        self.shm_ref = setup_shared_memory(self.env_space, num_p=-1) # 학습을 위한 공유메모리 확보
 
+        # TODO: LearnerStorageMulti를 사용할 경우
+        self.lock_manager = LockManager(self.env_space, num_locks=self.args.num_shared_buffer)
+        
         for learner_port in learner_ports:
             heartbeat = mp.Value("f", time.monotonic())
 
@@ -272,6 +288,7 @@ class Runner:
                     self.args,
                     mutex,
                     self.shm_ref,
+                    self.lock_manager,
                     self.stop_event,
                     learner_ip,
                     learner_port,
@@ -300,6 +317,7 @@ class Runner:
                 self.args,
                 mutex,
                 self.shm_ref,
+                self.lock_manager,
                 self.stop_event,
                 learner_ip,
                 learner_worker_port,
@@ -441,7 +459,15 @@ class Runner:
                     if isinstance(v, tuple) and isinstance(v[0], SharedMemory):
                         v[0].unlink()
                         v[0].close()
-                    
+                        
+            from agents.storage_module.shared_batch import SMInterface
+            if hasattr(self, "lock_manager"):
+                for _, shm in self.lock_manager.shm_mutexes:
+                    for k, v in shm.items():
+                        if isinstance(v, tuple) and isinstance(v[0], SharedMemory):
+                            v[0].unlink()
+                            v[0].close()
+                        
             err, log_dir = Runner.extract_err(func_name)
             SaveErrorLog(err, log_dir)
             

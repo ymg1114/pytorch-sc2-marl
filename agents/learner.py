@@ -1,8 +1,10 @@
 import os
 import zmq
+import torch
 # import time
 # import torch.nn.functional as F
 import asyncio
+import math
 
 # import torch.nn.functional as F
 # import multiprocessing as mp
@@ -14,7 +16,7 @@ from torch.distributions import Categorical, Uniform
 
 import zmq.asyncio
 
-from utils.lock import Mutex
+from utils.lock import Mutex, LockManager
 from utils.utils import (
     Protocol,
     encode,
@@ -27,6 +29,7 @@ from utils.utils import (
 )
 from torch.optim import Adam, RMSprop
 
+from abc import ABC, abstractmethod
 from .storage_module.shared_batch import SMInterface
 from . import (
     ppo_awrapper,
@@ -45,25 +48,28 @@ timer = ExecutionTimer(
 )  # Learner에서 데이터 처리량 (학습)
 
 
-class LearnerBase(SMInterface):
+class LearnerBase(ABC):
     def __init__(
         self,
         args,
         mutex,
         model_cls,
         shm_ref,
+        lock_manager,
         stop_event,
         learner_ip,
         learner_worker_port,
         env_space,
         heartbeat=None,
     ):
-        super().__init__(shm_ref=shm_ref, env_space=env_space)
         self.args = args
         self.env_space = env_space
-        self.mutex: Mutex = mutex # 따로 락 객체를 사용하고 있지는 않음
+        self.mutex = mutex
         self.stop_event = stop_event
-
+        
+        self.shm_ref = shm_ref
+        self.lock_manager: LockManager = lock_manager
+        
         self.heartbeat = heartbeat
         
         self.device = self.args.device
@@ -88,7 +94,6 @@ class LearnerBase(SMInterface):
 
         # self.to_gpu = partial(make_gpu_batch, device=self.device)
         self.zeromq_set(learner_ip, learner_worker_port)
-        self.get_shared_memory_interface()
         
         from torch.utils.tensorboard import SummaryWriter
         self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
@@ -192,33 +197,12 @@ class LearnerBase(SMInterface):
     #         dst, src
     #     )  # 학습용 데이터를 새로 생성하고, 공유메모리의 데이터 오염을 막기 위함.
     #     return dst
-
-    def sample_batch_from_sh_memory(self):
-        batch_dict = defaultdict(dict)
-
-        def _extract_batch(space_name, space):
-            for k, v in space.items():
-                assert hasattr(self, f"sh_{k}")
-                B, S, D = v.nvec  # Batch, Sequence, Dim
-                batch_dict[space_name][k] = to_torch(getattr(self, f"sh_{k}").reshape((B, S, D)))
-
-        _extract_batch("obs", self.env_space["obs"])
-        _extract_batch("act", self.env_space["act"])
-        _extract_batch("rew", self.env_space["rew"])
-        _extract_batch("info", self.env_space["info"])
-
-        return batch_dict
         
     @ppo_awrapper(timer=timer)
     def learning_ppo(self): ...
 
     @impala_awrapper(timer=timer)
     def learning_impala(self): ...
-
-    def is_sh_ready(self):
-        Bat = self.args.batch_size
-        Shn = self.sh_data_num
-        return True if Shn.value >= Bat else False
 
     async def sub_stat_data(self):
         while not self.stop_event.is_set():
@@ -232,18 +216,7 @@ class LearnerBase(SMInterface):
             await self.stat_q.put(data)
             print("stat-data is received !")
             await asyncio.sleep(1e-4)
-
-    async def put_batch_to_batch_q(self):
-        while not self.stop_event.is_set():
-            if self.is_sh_ready():
-                with self.mutex.lock():
-                    batch_dict = self.sample_batch_from_sh_memory()
-                    await self.batch_queue.put(batch_dict)
-                    self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
-                    print("batch is ready !")
-
-            await asyncio.sleep(1e-4)
-
+    
     async def learning_chain_ppo(self):
         self.batch_queue = asyncio.Queue(1024)
         self.stat_q = asyncio.Queue(128)
@@ -264,8 +237,121 @@ class LearnerBase(SMInterface):
         ]
         await asyncio.gather(*tasks)
 
+    @abstractmethod
+    def is_sh_ready(self, *args, **kwargs):
+        ...
 
-class LearnerSinglePPO(LearnerBase): ...
+    @abstractmethod
+    def sample_batch_from_sh_memory(self, *args, **kwargs):
+        ...
+            
+    @abstractmethod
+    async def put_batch_to_batch_q(self, *args, **kwargs):
+        ...
+        
+
+class LearnerSingle(LearnerBase, SMInterface):
+    def __init__(
+        self, *args, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        SMInterface.__init__(self, shm_ref=self.shm_ref, env_space=self.env_space)
+                
+    def is_sh_ready(self):
+        Bat = self.args.batch_size
+        Shn = self.sh_data_num
+        return True if Shn.value >= Bat else False
+        
+    def sample_batch_from_sh_memory(self):
+        batch_dict = defaultdict(dict)
+
+        def _extract_batch(space_name, space):
+            for k, v in space.items():
+                assert hasattr(self, f"sh_{k}")
+                B, S, D = v.nvec  # Batch, Sequence, Dim
+                batch_dict[space_name][k] = to_torch(getattr(self, f"sh_{k}").reshape((B, S, D)))
+
+        _extract_batch("obs", self.env_space["obs"])
+        _extract_batch("act", self.env_space["act"])
+        _extract_batch("rew", self.env_space["rew"])
+        _extract_batch("info", self.env_space["info"])
+
+        return batch_dict
+        
+    async def put_batch_to_batch_q(self):
+        while not self.stop_event.is_set():
+            assert isinstance(self.mutex, Mutex)
+            
+            with self.mutex.lock():
+                if self.is_sh_ready():
+                    batch_dict = self.sample_batch_from_sh_memory()
+                    await self.batch_queue.put(batch_dict)
+                    self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
+                    print("batch is ready !")
+
+            await asyncio.sleep(1e-4)
+            
+        
+class LearnerMulti(LearnerBase):
+    def __init__(
+        self, *args, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.lock_manager.reconnect_shared_memory(self.env_space)
+        
+    def is_sh_ready(self):
+        Bat = self.args.batch_size
+        total_count = sum(i[1].get_count() for i in self.lock_manager.shm_mutexes)
+        return True if total_count >= Bat else False
+
+    def sample_batch_from_sh_memory(self):
+        batch_dict = defaultdict(dict)
+            
+        def _extract_batch(space_name, shm_inf, space):
+            for k, v in space.items():
+                # 데이터 조회 및 변환
+                attr_name = f"sh_{k}"
+                if not hasattr(shm_inf, attr_name):
+                    raise AttributeError(f"{shm_inf} does not have attribute {attr_name}")
+                
+                _, S, D = v.nvec  # Batch, Sequence, Dim
+                N = shm_inf.get_count()
+                
+                tensor_data = to_torch(getattr(shm_inf, attr_name)[:math.prod((N, *v.nvec[1:]))]).reshape(-1, S, D)
+
+                if k in batch_dict[space_name]:
+                    # 기존 torch 배열의 Batch 축에 concatenate
+                    batch_dict[space_name][k] = torch.cat([tensor_data, batch_dict[space_name][k]], dim=0)
+                else:
+                    batch_dict[space_name][k] = tensor_data
+
+        # 모든 공간에 대해 데이터를 추출
+        for shm_lock, shm_inf in self.lock_manager.shm_mutexes:
+            for space_name in ["obs", "act", "rew", "info"]:
+                _extract_batch(space_name, shm_inf, self.env_space[space_name])
+
+        return batch_dict
+        
+    async def put_batch_to_batch_q(self):
+        while not self.stop_event.is_set():
+
+            with self.lock_manager.Lock():
+                if self.is_sh_ready():
+                    batch_dict = self.sample_batch_from_sh_memory()
+                    await self.batch_queue.put(batch_dict)
+                    self.lock_manager.Reset() # 모든 공유메모리 저장 인덱스 (batch_num) 초기화
+                    print("batch is ready !")
+
+            await asyncio.sleep(1e-4)
+        
+        
+class LearnerMultiPPO(LearnerMulti): ...
 
 
-class LearnerSingleIMPALA(LearnerSinglePPO): ...
+class LearnerMultiIMPALA(LearnerMulti): ...
+
+        
+class LearnerSinglePPO(LearnerSingle): ...
+
+
+class LearnerSingleIMPALA(LearnerSingle): ...

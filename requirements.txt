@@ -7,3 +7,7 @@ git+https://github.com/oxwhirl/smacv2.git
 gymnasium
 smac
 tensorboard
+jax
+"jax[cuda12]"
+flax
+distrax

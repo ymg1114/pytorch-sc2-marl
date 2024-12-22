@@ -1,14 +1,14 @@
 import os
 import asyncio
 import time
+import jax
 import torch
 import torch.nn.functional as F
 
 from functools import partial
-
+from networks.network import jax_model_forward
 from utils.utils import ExecutionTimer
-
-from ..compute_loss import goal_curr_alive_mine_mask, append_loss, compute_v_trace_twohot, cal_hier_log_probs, rew_vec_to_scaled_scalar, cross_entropy_loss, Normalizier
+from ..learner_lib import goal_curr_alive_mine_mask, append_loss, compute_v_trace_twohot, cal_hier_log_probs, rew_vec_to_scaled_scalar, cross_entropy_loss, Normalizier
 
 
 Symlog = Normalizier.symlog
@@ -35,11 +35,11 @@ async def learning(parent, timer: ExecutionTimer):
                     assert "act" in batch_dict
                     assert "rew" in batch_dict
                     assert "info" in batch_dict
-        
-                    obs_dict = {k: v.to(parent.device) for k, v, in batch_dict["obs"].items()}
-                    act_dict = {k: v.to(parent.device) for k, v, in batch_dict["act"].items()}
-                    rew_dict = {k: v.to(parent.device) for k, v, in batch_dict["rew"].items()}
-                    info_dict = {k: v.to(parent.device) for k, v, in batch_dict["info"].items()}
+                    
+                    obs_dict = {k: jax.device_put(v, parent.device) for k, v, in batch_dict["obs"].items()}
+                    act_dict = {k: jax.device_put(v, parent.device) for k, v, in batch_dict["act"].items()}
+                    rew_dict = {k: jax.device_put(v, parent.device) for k, v, in batch_dict["rew"].items()}
+                    info_dict = {k: jax.device_put(v, parent.device) for k, v, in batch_dict["info"].items()}
 
                     behav_log_probs  = cal_hier_log_probs(act_dict)
                     rew_sca = rew_vec_to_scaled_scalar(rew_dict)
@@ -50,12 +50,14 @@ async def learning(parent, timer: ExecutionTimer):
                     # epoch-learning
                     for _ in range(parent.args.K_epoch):
                         # on-line model forwarding
-                        log_probs, entropy, value = parent.model(
+                        log_probs, entropy, value = jax_model_forward(
+                            parent.model,
                             obs_dict,
                             act_dict,
                             hx[:, 0],
-                            cx[:, 0],
-                        )
+                            cx[:, 0]
+                            )
+                        
                         with torch.no_grad():
                             # V-trace를 사용하여 off-policy corrections 연산
                             ratio, advantages, values_target = compute_v_trace_twohot(
@@ -72,8 +74,8 @@ async def learning(parent, timer: ExecutionTimer):
 
                             scale = CalculateScale(advantages, previous_s=scale)
                             advantages = NormReturns(advantages, scale)
-                            valid_mine_mask = goal_curr_alive_mine_mask(obs_dict, env_space=parent.env_space)
- 
+                            valid_mine_mask = goal_curr_alive_mine_mask(obs_dict["obs_mine"], parent.env_space["others"]["mine_feats_names"])
+
                         loss_policy = -(log_probs[:, :-1] * advantages)[valid_mine_mask].mean()
                         # loss_value = F.smooth_l1_loss(value[:, :-1], td_target).mean()
                         loss_value = cross_entropy_loss(value[:, :-1], values_target_twohot)[valid_mine_mask.squeeze(-1)].mean()

@@ -6,7 +6,7 @@ import time
 # import gymnasium as gym
 # import copy
 
-import torch
+import jax
 import traceback
 # import asyncio
 import uvloop
@@ -43,10 +43,13 @@ from utils.utils import (
     result_dir,
     model_dir,
     ErrorComment,
-    select_least_used_gpu,
+    # select_least_used_gpu,
+    select_least_used_jax_gpu,
 )
 from utils.lock import Mutex, LockManager
 
+# JAX 기본 설정. 필요시 CUDA 세팅
+jax.config.update('jax_default_device', jax.devices('cpu')[0])
 
 fn_dict = {}
 child_process = {} # 전역 변수로 child_process 관리
@@ -62,14 +65,10 @@ class Runner:
     def __init__(self):
         mp.set_start_method('spawn')
         self.args = Params
-        self.args.device = torch.device(
-            f"cuda:{select_least_used_gpu()}" if torch.cuda.is_available() else "cpu"
-        )
 
         # 미리 정해진 경로가 있다면 그것을 사용
         self.args.result_dir = self.args.result_dir or result_dir
         self.args.model_dir = self.args.model_dir or model_dir
-        print(f"device: {self.args.device}")
 
         _model_dir = Path(self.args.model_dir)
         # 경로가 디렉토리인지 확인

@@ -1,5 +1,5 @@
 import numpy as np
-
+# import jax.numpy as jnp
 from utils.utils import *
 
 from typing import TYPE_CHECKING
@@ -24,8 +24,11 @@ r_func = {}
 
 
 def register(name):
+    """
+    Registers a function in `r_func` dictionary for JAX-based reward calculations.
+    """
+    
     assert name in REWARD_PARAM
-
     def _wrapper(func):
         r_func[name] = func
         return func
@@ -149,8 +152,6 @@ def cal_lose(env_core, rdx, rew_vec, **kwargs):
 
 
 class Rewarder():
-    # symlog_np = lambda x: np.sign(x) * np.log(np.abs(x) + 1)
-    
     def __init__(self, env_core: "StarCraft2Env"):
         self.env_core = env_core # 상위 SC2Env
 
@@ -184,5 +185,4 @@ class Rewarder():
 
         self.update(rew_vec)
 
-        # return Rewarder.symlog_np(rew_vec.T) # (Agents, REWARD)
         return rew_vec.T # (Agents, REWARD)

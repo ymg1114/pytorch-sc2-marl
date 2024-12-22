@@ -1,4 +1,6 @@
 # import torch
+import jax
+import jax.numpy as jnp
 import numpy as np
 
 from smacv2.env import StarCraft2Env
@@ -6,6 +8,7 @@ from smacv2.env.starcraft2.wrapper import StarCraftCapabilityEnvWrapper
 
 from pysc2.lib import protocol
 from absl import logging
+from functools import partial
 
 from rewarder.rewarder import Rewarder, REWARD_PARAM
 from observer.observer import Observer
@@ -29,35 +32,37 @@ class WrapperSC2Env(StarCraft2Env):
         self.rewarder = Rewarder(self)
         self.observer = Observer(self)
 
-    def act_dict_converter(self, act_dict):
-        act_sampled = act_dict["act_sampled"].numpy()
-        move_sampled = act_dict["move_sampled"].numpy()
-        target_sampled = act_dict["target_sampled"].numpy()
-        assert act_sampled.shape == move_sampled.shape == target_sampled.shape
-        assert self.n_actions_no_attack == 6
+    @staticmethod
+    @partial(jax.jit, static_argnums=(1,))
+    def act_dict_converter(act_dict, n_actions_no_attack):
+        act_sampled = act_dict["act_sampled"]
+        move_sampled = act_dict["move_sampled"]
+        target_sampled = act_dict["target_sampled"]
+        # assert act_sampled.shape == move_sampled.shape == target_sampled.shape
+        # assert self.n_actions_no_attack == 6
         
         # 초기화
-        actions = np.zeros_like(act_sampled)
+        actions = jnp.zeros_like(act_sampled)
 
         # NO_OP, STOP 행동은 그대로 가져감
-        act_idx = np.where((act_sampled == NO_OP_IDX) | (act_sampled == STOP_IDX))
-        actions[act_idx] = act_sampled[act_idx]
+        act_idx = jnp.where((act_sampled == NO_OP_IDX) | (act_sampled == STOP_IDX))
+        actions.at[act_idx].set(act_sampled[act_idx])
 
         # MOVE 행동은 해당 움직임의 방향 인덱스로 변경
         # NO_OP, STOP 2개 행동 이후부터 4개 -> MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST
-        move_idx = np.where(act_sampled == MOVE_IDX)
-        act_dict["on_select_move"][move_idx] = 1.0 # 선택했음을 알려줌
-        actions[move_idx] = move_sampled[move_idx] + 2 # 실제 행동 인덱스에 맞추기 위해 shift
+        move_idx = jnp.where(act_sampled == MOVE_IDX)
+        act_dict["on_select_move"].at[move_idx].set(1.0) # 선택했음을 알려줌
+        actions.at[move_idx].set(move_sampled[move_idx] + 2) # 실제 행동 인덱스에 맞추기 위해 shift
 
         # TARGET 행동은 해당 유닛 인덱스로 변경
         # NO_OP, STOP, MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST 6개 행동 이후부터 나머지
-        tar_idx = np.where(act_sampled == TARGET_IDX)
-        act_dict["on_select_target"][tar_idx] = 1.0 # 선택했음을 알려줌
-        actions[tar_idx] = target_sampled[tar_idx] + self.n_actions_no_attack  # 실제 행동 인덱스에 맞추기 위해 shift
+        tar_idx = jnp.where(act_sampled == TARGET_IDX)
+        act_dict["on_select_target"].at[tar_idx].set(1.0) # 선택했음을 알려줌
+        actions.at[tar_idx].set(target_sampled[tar_idx] + n_actions_no_attack)  # 실제 행동 인덱스에 맞추기 위해 shift
 
         # TODO: FLEE 행동은 -1번 인덱스 행동으로 임의로 맵핑 (신경망 logits 레벨에서는 4번)
-        flee_idx = np.where(act_sampled == FLEE_IDX)
-        actions[flee_idx] = -1
+        flee_idx = jnp.where(act_sampled == FLEE_IDX)
+        actions.at[flee_idx].set(-1)
         
         return actions
 
@@ -149,8 +154,9 @@ class WrapperSC2Env(StarCraft2Env):
         
         #TODO: 임시
         assert self.heuristic_ai == False, f"일단 이 경우만 다룬다. heuristic_ai: {self.heuristic_ai}"
+        assert self.n_actions_no_attack == 6
         
-        actions_int = [int(a) for a in self.act_dict_converter(act_dict)]
+        actions_int = [int(a) for a in WrapperSC2Env.act_dict_converter(act_dict, self.n_actions_no_attack)]
 
         self.last_action = np.eye(self.n_actions)[np.array(actions_int)]
 
@@ -189,7 +195,7 @@ class WrapperSC2Env(StarCraft2Env):
             self._obs = self._controller.observe()
         except (protocol.ProtocolError, protocol.ConnectionError):
             self.full_restart()
-            return np.zeros((len(REWARD_PARAM), len(self.agents)), dtype=np.float32), True, {}
+            return jnp.zeros((len(REWARD_PARAM), len(self.agents)), dtype=np.float32), True, {}
 
         self._total_steps += 1
         self._episode_steps += 1
@@ -209,7 +215,7 @@ class WrapperSC2Env(StarCraft2Env):
         for aid, (_al_id, al_unit) in enumerate(self.agents.items()):
             if al_unit.health == 0:
                 dead_allies += 1
-                dead_agents_vec[aid] = 1.0 # next-state 기준 죽은 에이전트
+                dead_agents_vec.at[aid].set(1.0) # next-state 기준 죽은 에이전트
                 
                 for e in range(self.n_enemies):
                     if self.enemy_tags[e] == _al_id:
@@ -255,7 +261,7 @@ class WrapperSC2Env(StarCraft2Env):
         # self.reward = reward
         self.reward_vec = reward_vec
 
-        return reward_vec, terminated, info
+        return jnp.array(reward_vec), terminated, info
 
 
 class WrapperSMAC2(StarCraftCapabilityEnvWrapper):

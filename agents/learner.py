@@ -1,14 +1,10 @@
-import os
 import zmq
 import torch
-# import time
-# import torch.nn.functional as F
+import jax
+import jax.numpy as jnp
 import asyncio
 import math
 
-# import torch.nn.functional as F
-# import multiprocessing as mp
-import torch.jit as jit
 import numpy as np
 from collections import defaultdict, deque
 from torch.distributions import Categorical, Uniform
@@ -21,11 +17,11 @@ from utils.utils import (
     Protocol,
     encode,
     decode,
-    # make_gpu_batch,
     ExecutionTimer,
     Params,
     to_torch,
     # extract_values,
+    select_least_used_jax_gpu,
 )
 from torch.optim import Adam, RMSprop
 
@@ -72,27 +68,33 @@ class LearnerBase(ABC):
         
         self.heartbeat = heartbeat
         
+        # Select device
+        device = select_least_used_jax_gpu()
+        # device = jax.devices('gpu')[0] if jax.devices('gpu') else jax.devices('cpu')[0]
+        self.args.device = device if device else jax.devices("cpu")[0] # 기본적으로 Learner 쪽은 Cuda 디바이스
+        jax.config.update('jax_default_device', self.args.device)
+
+        print(f"learner device: {self.args.device}")
+
         self.device = self.args.device
         self.idx = 0
         self.scale = None
         
         model: "ModelSingle" = model_cls(self.args, self.env_space)
-        self.model = jit.script(model).to(self.device)
+
+        self.model, restored_pure_dict = model_cls.load_model_weight(self.args, model, self.device)
+        if restored_pure_dict is not None:
+            self.idx = restored_pure_dict["log_idx"]
+            self.scale = restored_pure_dict["scale"]
         
-        out_dict = model_cls.set_model_weight(self.args, self.device)
-        if out_dict is not None:
-            self.model.load_state_dict(out_dict["state_dict"])
-            self.idx = out_dict["log_idx"]
-            self.scale = out_dict["scale"]
-            
-        self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
-        # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr, eps=1e-5)
-        if out_dict is not None:
-            self.optimizer.load_state_dict(out_dict["optim_state_dict"])
+        # TODO: torch 관련 코드 및 Optimizer를 -> jax, flax, optax로 변경
+        # self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
+        # # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr, eps=1e-5)
+        # if out_dict is not None:
+        #     self.optimizer.load_state_dict(out_dict["optim_state_dict"])
             
         self.CT = Categorical
 
-        # self.to_gpu = partial(make_gpu_batch, device=self.device)
         self.zeromq_set(learner_ip, learner_worker_port)
         
         from torch.utils.tensorboard import SummaryWriter
@@ -180,24 +182,16 @@ class LearnerBase(ABC):
             for k, v in stat_dict.items():
                 if k != "epi_rew_vec":
                     tag = f"stat-{k}"
-                    y = np.mean(v)
+                    y = jnp.mean(v)
                     self.writer.add_scalar(tag, y, self.idx)
 
-            _mean_rew_vec = np.mean(stat_dict["epi_rew_vec"], axis=0)
+            _mean_rew_vec = jnp.mean(stat_dict["epi_rew_vec"], axis=0)
             
             for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
                 tag = f"mean-weighted-reward-{r_param}"
                 weighted_reward = _mean_rew_vec[rdx] * weight
                 self.writer.add_scalar(tag, weighted_reward, self.idx)
-                
-    # @staticmethod
-    # def copy_to_ndarray(src):
-    #     dst = np.empty(src.shape, dtype=src.dtype)
-    #     np.copyto(
-    #         dst, src
-    #     )  # 학습용 데이터를 새로 생성하고, 공유메모리의 데이터 오염을 막기 위함.
-    #     return dst
-        
+                        
     @ppo_awrapper(timer=timer)
     def learning_ppo(self): ...
 

@@ -1,5 +1,6 @@
 import os, sys
 # import io
+import jax
 import ctypes
 import json
 import torch
@@ -72,6 +73,20 @@ lib.compute_flee_positions.argtypes = [
 ]
 
 
+def select_least_used_jax_gpu():
+    # GPU 메모리 정보를 가져옴
+    gpu_memory_info = get_gpu_memory_info()
+
+    # 가장 Free Memory (MiB)가 높은 GPU 선택
+    least_used_idx = max(enumerate(gpu_memory_info), key=lambda x: x[1]['Free Memory (MiB)'])[0]
+    
+    gpu_devices = [d for d in jax.devices() if d.platform == "gpu"]
+    if not gpu_devices:
+        return None
+    
+    return gpu_devices[least_used_idx]
+
+
 def dict_to_simplenamespace(d):
     if isinstance(d, dict):
         for key, value in d.items():
@@ -137,10 +152,9 @@ def extract_file_num(filename):
         return -1
 
 
-def make_gpu_batch(*args, device):
-    to_gpu = lambda tensor: tensor.to(device)
-    return tuple(map(to_gpu, args))
-
+# def make_gpu_batch(*args, device):
+#     to_gpu = lambda tensor: tensor.to(device)
+#     return tuple(map(to_gpu, args))
 
 
 def get_gpu_memory_info():

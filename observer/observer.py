@@ -1,4 +1,4 @@
-import numpy as np
+import jax.numpy as jnp
 
 from utils.utils import *
 from .avail.avail_converter import Avail
@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from smacv2.env.starcraft2.starcraft2 import StarCraft2Env
+
+from .observer_lib import _jit_update_hp_vmap, _jit_get_obs_vmap
 
 
 class Observer():
@@ -50,85 +52,68 @@ class Observer():
         
         assert len(self.obs_feature_names)+self.num_units == len(self.mine_feats_names) + len(self.ally_feats_names) + len(self.enemy_feats_names)
         
-        self.hp_delta = np.zeros((self.n_agents, self.num_units, 5), dtype=np.float32)
-        self.last_hp = np.zeros((self.n_agents, self.num_units), dtype=np.float32)  # 각 개체의 마지막 HP 값
+        self.hp_delta = jnp.zeros((self.n_agents, self.num_units, 5), dtype=jnp.float32)
+        self.last_hp = jnp.zeros((self.n_agents, self.num_units), dtype=jnp.float32)  # 각 개체의 마지막 HP 값
 
         self.avail = Avail(self)
 
+    def _extract_health(self):
+        # 나 (mine), 아군 (ally), 적군 (enemy)의 hp 업데이트
+        indices = {
+            "mine": self.obs_feature_names.index("own_health"),
+            "ally": [self.obs_feature_names.index(f"ally_health_{i+1}") for i in range(self.n_allies)],
+            "enemy": [self.obs_feature_names.index(f"enemy_health_{i}") for i in range(self.n_enemies)]
+        }
+        mine_health = self.obs_total[:, indices["mine"]]
+        ally_health = self.obs_total[:, indices["ally"]]
+        enemy_health = self.obs_total[:, indices["enemy"]]
+        return mine_health, ally_health, enemy_health
+
     def update_hp(self):
-        # 나 (mine)의 HP 업데이트
-        mine_health = self.obs_total[..., self.obs_feature_names.index('own_health')] # (n_agents,)
-
-        # 아군 (ally) HP 업데이트
-        index_ally_hp = [self.obs_feature_names.index(f'ally_health_{i+1}') for i in range(self.n_allies)]
-        ally_health = self.obs_total[..., index_ally_hp] # (n_agents, n_allies)
-
-        # 적군 (enemy) HP 업데이트
-        index_enemy_hp = [self.obs_feature_names.index(f'enemy_health_{i}') for i in range(self.n_enemies)]
-        enemy_health = self.obs_total[..., index_enemy_hp] # (n_agents, n_enemies)
-
+        """Wraps the JIT-compiled update_hp function."""
+        
+        mine_health, ally_health, enemy_health = self._extract_health()
+        
         # 모든 HP 업데이트를 벡터화하여 한 번에 처리
-        all_health = np.concatenate([
-            mine_health[..., np.newaxis],  # 나의 HP (n_agents, 1)
+        all_health = jnp.concatenate([
+            mine_health[..., jnp.newaxis],  # 나의 HP (n_agents, 1)
             ally_health,  # 아군의 HP (n_agents, n_allies)
             enemy_health  # 적군의 HP (n_agents, n_enemies)
         ], axis=-1)  # (n_agents, 1+n_allies+n_enemies)
-
-        # 모든 HP 변화량을 한 번에 업데이트
-        self._update_delta(all_health)
-
-    def _update_delta(self, current_hp):
-        """이전 HP와 현재 HP를 비교하여 변화량을 3차원 배열에 저장"""
-        # 첫 번째 스텝에서의 delta 처리 (이전 값이 없는 경우)
-        if np.all(self.last_hp == 0):
-            delta = np.zeros_like(current_hp)  # 첫 번째 스텝에서는 변화량을 0으로 설정
-        else:
-            delta = current_hp - self.last_hp  # 이후 스텝에서는 정상적으로 변화량 계산
-
-        # 3차원 배열을 왼쪽으로 한 칸 밀어내기
-        self.hp_delta[..., :-1] = self.hp_delta[..., 1:]
-
-        # 마지막에 최신 delta 추가
-        self.hp_delta[..., -1] = delta
-
-        # 마지막 HP 값을 현재 HP로 업데이트
-        self.last_hp = current_hp
-    
-    def get_obs(self):
-        """가공전 obs 정보를 활용"""
         
-        self.obs_total = np.array(self.env_core.get_obs(), dtype=np.float32)
-        assert self.obs_total.shape == (self.n_agents, self.obs_size)
+        self.hp_delta, self.last_hp = _jit_update_hp_vmap(all_health, self.hp_delta, self.last_hp, self.last_hp)
 
+    def get_obs(self):
+        """Wraps the JIT-compiled get_obs function.
+
+        가공전 obs 정보를 활용"""
+        
+        self.obs_total = jnp.array(self.env_core.get_obs(), dtype=jnp.float32)
+        assert self.obs_total.shape == (self.n_agents, self.obs_size)
+        
         obs_mine = self.get_obs_mine(self.obs_total)
         obs_ally = self.get_obs_ally(self.obs_total)
         obs_enemy = self.get_obs_enemy(self.obs_total)
         
         self.update_hp()
-        self.mean_hp_delta = self.hp_delta.mean(-1) # (n_agents, 1+n_allies+n_enemies)
         
-        # 나 (mine)의 feature에 mean_hp_delta 추가
-        mine_hp_delta = self.mean_hp_delta[:, 0:1]  # (n_agents, 1)
-        self.obs_mine = np.concatenate([obs_mine, mine_hp_delta], axis=-1)
+        assert obs_mine.shape == (self.n_agents, len(self.mine_feats_names))
+        assert obs_ally.shape == (self.n_agents, len(self.ally_feats_names))
+        assert obs_enemy.shape == (self.n_agents, len(self.enemy_feats_names))
         
-        # 아군 (ally)의 feature에 mean_hp_delta 추가
-        ally_hp_delta = self.mean_hp_delta[:, 1:self.n_allies+1]  # (n_agents, n_allies)
-        self.obs_ally = np.concatenate([obs_ally, ally_hp_delta], axis=-1)
-
-        # 적군 (enemy)의 feature에 mean_hp_delta 추가
-        enemy_hp_delta = self.mean_hp_delta[:, self.n_allies+1:]  # (n_agents, n_enemies)
-        self.obs_enemy = np.concatenate([obs_enemy, enemy_hp_delta], axis=-1)
+        obs_mine, obs_ally, obs_enemy = _jit_get_obs_vmap(
+            obs_mine,
+            obs_ally,
+            obs_enemy,
+            self.hp_delta,
+            self.n_allies
+            )
         
-        assert self.obs_mine.shape == (self.n_agents, len(self.mine_feats_names))
-        assert self.obs_ally.shape == (self.n_agents, len(self.ally_feats_names))
-        assert self.obs_enemy.shape == (self.n_agents, len(self.enemy_feats_names))
-
-        obs_dict = {
-            "obs_mine": self.obs_mine,
-            "obs_ally": self.obs_ally,
-            "obs_enemy": self.obs_enemy,
+        return {
+            "obs_mine": obs_mine,
+            "obs_ally": obs_ally,
+            "obs_enemy": obs_enemy,
         }
-        return obs_dict
 
     def get_obs_mine(self, obs_total):
         """주의) 하드 코드 성향이 존재
@@ -138,7 +123,7 @@ class Observer():
         
         mine_move_feat = obs_total[:, :self.move_feats_dim]
         mine_own_feat = obs_total[:, -self.own_feats_dim:]
-        return np.hstack((mine_move_feat, mine_own_feat))
+        return jnp.hstack((mine_move_feat, mine_own_feat))
 
     def get_obs_enemy(self, obs_total):
         """주의) 하드 코드 성향이 존재
@@ -148,7 +133,7 @@ class Observer():
         
         src = self.move_feats_dim
         dst = self.move_feats_dim + self.n_enemies*self.n_enemy_feats
-        return obs_total[:, src: dst]
+        return jnp.array(obs_total[:, src: dst])
 
     def get_obs_ally(self, obs_total):
         """주의) 하드 코드 성향이 존재
@@ -158,7 +143,7 @@ class Observer():
         
         src = -self.own_feats_dim - self.n_allies*self.n_ally_feats
         dst = -self.own_feats_dim
-        return obs_total[:, src: dst]
+        return jnp.array(obs_total[:, src: dst])
 
     def get(self):
         out_dict = {

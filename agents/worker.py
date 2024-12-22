@@ -2,55 +2,21 @@ import uuid
 import time
 import zmq
 import asyncio
-import torch
-import torch.jit as jit
-import numpy as np
+
+import jax
+import jax.numpy as jnp
+from flax import nnx
 
 from utils.utils import Protocol, encode, decode, SC2Config
-
 from env.sc2_env_wrapper import WrapperSMAC2
-
 from rewarder.rewarder import REWARD_PARAM
-
 from typing import TYPE_CHECKING
+
+from networks.network import jax_model_act
 
 if TYPE_CHECKING:
     from networks.network import ModelSingle
 
-
-# def check_act_avail(env, act_dict, n_agents):
-#     converted_act_idx = env.act_dict_converter(act_dict)
-#     avail_act_list = []
-#     for a_id in range(n_agents):
-#         avail_acts = env.get_avail_agent_actions(a_id)
-#         avail_act_list.append(avail_acts)
-
-#     for c_a, av_l in zip(converted_act_idx, avail_act_list):
-#         assert av_l[c_a.item()] == 1, f"converted_act_idx: {converted_act_idx}, avail_act_list: {avail_act_list}"
-
-
-# def Wrapper(func):
-#     agent_tag = []
-#     is_full = [False]
-    
-#     def _inner(agents, n_agents):
-#         nonlocal agent_tag, is_full
-#         func(agents, n_agents, agent_tag, is_full)
-#     return _inner
-
-
-# @Wrapper
-def check_agent_id(agents, n_agents, agent_tag, is_full):
-    if not is_full[0]:
-        for agent in agents.values():
-            agent_tag.append(agent.tag)
-    
-    if len(agent_tag) == n_agents:
-        is_full[0] = True
-    
-    if is_full[0]:
-        assert agent_tag == [v.tag for v in agents.values()], f"agent_tag: {agent_tag}, agents: {agents} "
-    
 
 class Worker:
     def __init__(
@@ -67,17 +33,13 @@ class Worker:
         heartbeat=None,
     ):
         self.args = args
-        self.device = args.device  # cpu
+        self.device = jax.devices("cpu")[0]  # cpu
+        print(f"worker device: {self.args.device}")
+        
         self.env_space = env_space
-        
-        # 서로 다른 worker 인스턴스들이 다른 weight로 초기화되나, learner에서 최초 1회 학습 후 
-        # identical 한 weight를 얻으므로, 이 정도는 감수
+
         model: "ModelSingle" = model_cls(self.args, self.env_space)
-        self.model = jit.script(model).to("cpu").eval()
-        
-        out_dict  = model_cls.set_model_weight(self.args)
-        if out_dict is not None:
-            self.model.load_state_dict(out_dict["state_dict"])
+        self.model, _  = model_cls.load_model_weight(self.args, model)
 
         self.worker_name = worker_name
         self.stop_event = stop_event
@@ -96,7 +58,6 @@ class Worker:
 
         self.env_info = self.env.get_env_info()
         self.env_space = self.env.get_env_space(self.args)
-
         self.zeromq_set(manager_ip, learner_ip, manager_port, learner_worker_port)
 
     def __del__(self):  # 소멸자
@@ -126,13 +87,19 @@ class Worker:
         )  # subscribe model
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
+    def load_flax_model(self, pure_dict):
+        abstract_model = nnx.eval_shape(lambda: self.model)
+        graphdef, abstract_state = nnx.split(abstract_model)
+        abstract_state.replace_by_pure_dict(pure_dict)
+        return nnx.merge(graphdef, abstract_state)
+    
     async def req_model(self):
         while not self.stop_event.is_set():
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             if protocol is Protocol.Model:
-                model_state_dict = {k: v.to("cpu") for k, v in data.items()}
-                self.model.load_state_dict(model_state_dict)  # reload learned-model from learner
-
+                pure_dict = jax.device_put(data, self.device)
+                self.model = self.load_flax_model(pure_dict) # reload learned-model from learner
+                
             await asyncio.sleep(0.1)
 
     async def pub_rollout(self, **roll_out):
@@ -158,28 +125,28 @@ class Worker:
 
     def initialize_lstm(self):
         return (
-            torch.zeros(self.env_info["n_agents"], self.args.hidden_size),
-            torch.zeros(self.env_info["n_agents"], self.args.hidden_size),
+            jnp.zeros((self.env_info["n_agents"], self.args.hidden_size), jnp.float32),
+            jnp.zeros((self.env_info["n_agents"], self.args.hidden_size), jnp.float32),
         )
 
     def set_default_actions(self, act_dict):
-        act_dict["on_select_act"] = torch.ones(self.env_info["n_agents"], 1)  # 항상 선택
-        act_dict["on_select_move"] = torch.zeros(self.env_info["n_agents"], 1)
-        act_dict["on_select_target"] = torch.zeros(self.env_info["n_agents"], 1)
+        act_dict["on_select_act"] = jnp.ones((self.env_info["n_agents"], 1), jnp.int16)  # 항상 선택
+        act_dict["on_select_move"] = jnp.zeros((self.env_info["n_agents"], 1), jnp.int16)
+        act_dict["on_select_target"] = jnp.zeros((self.env_info["n_agents"], 1), jnp.int16)
 
     def create_rollout_dict_except_already_dead(self, _id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec):
         rollout_dict = None
 
         death_tracker_ally = self.env.get_death_tracker_ally() # next-state에서 방금 막 죽은 것이 아닌, 이미 죽어 있는 아군 에이전트
-        # tar_y = np.where(death_tracker_ally == 1)[0] # 이미 죽음
-        not_tar_y = np.where(death_tracker_ally == 0)[0] # current-state 까진 살아 있음 혹은 next-state에서 막 방금 죽음
+        # tar_y = jnp.where(death_tracker_ally == 1)[0] # 이미 죽음
+        not_tar_y = jnp.where(death_tracker_ally == 0)[0] # current-state 까진 살아 있음 혹은 next-state에서 막 방금 죽음
 
         id_v = [f"{_id}_{agent_id}" for agent_id in range(self.env_info["n_agents"]) if not death_tracker_ally[agent_id]]
-        obs_dict_v = {k: torch.from_numpy(v[not_tar_y, ...]) for k, v in obs_dict.items()}
-        act_dict_v = {k: v[not_tar_y, ...] for k, v in act_dict.items()}
-        rew_vec_v = torch.from_numpy(rew_vec[not_tar_y, ...])
-        is_fir_v = torch.ones(len(not_tar_y)) if is_first else torch.zeros(len(not_tar_y))
-        done_v = (done_vec.to(torch.bool) | dead_agents_vec.to(torch.bool)).to(done_vec.dtype)[not_tar_y, ...] # 경기 종료 혹은 next-state에서 막 죽은 에이전트는 done 처리
+        obs_dict_v = {k: jnp.array(v[not_tar_y, ...]) for k, v in obs_dict.items()}
+        act_dict_v = {k: jnp.array(v[not_tar_y, ...]) for k, v in act_dict.items()}
+        rew_vec_v = jnp.array(rew_vec[not_tar_y, ...])
+        is_fir_v = jnp.ones(len(not_tar_y)) if is_first else jnp.zeros(len(not_tar_y))
+        done_v = (done_vec.astype(jnp.bool_) | dead_agents_vec.astype(jnp.bool_)).astype(done_vec.dtype)[not_tar_y, ...] # 경기 종료 혹은 next-state에서 막 죽은 에이전트는 done 처리
 
         if not_tar_y.size > 0:
             rollout_dict = {
@@ -196,11 +163,11 @@ class Worker:
     def create_rollout_dict(self, _id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec):
         return {
             "id": [f"{_id}_{agent_id}" for agent_id in range(self.env_info["n_agents"])],
-            "obs_dict": {k: torch.from_numpy(v) for k, v in obs_dict.items()},
+            "obs_dict": {k: jnp.array(v) for k, v in obs_dict.items()},
             "act_dict": act_dict,
-            "rew_vec": torch.from_numpy(rew_vec),
-            "is_fir": torch.ones(self.env_info["n_agents"]) if is_first else torch.zeros(self.env_info["n_agents"]),
-            "done": (done_vec.to(torch.bool) | dead_agents_vec.to(torch.bool)).to(done_vec.dtype),  # 경기 종료 혹은 죽은 에이전트는 done 처리
+            "rew_vec": jnp.array(rew_vec),
+            "is_fir": jnp.ones(self.env_info["n_agents"]) if is_first else jnp.zeros(self.env_info["n_agents"]),
+            "done": (done_vec.astype(jnp.bool_) | dead_agents_vec.astype(jnp.bool_)).astype(done_vec.dtype),  # 경기 종료 혹은 죽은 에이전트는 done 처리
         }
 
     async def collect_rolloutdata(self):
@@ -211,25 +178,23 @@ class Worker:
             _id = str(uuid.uuid4()) # 각 경기의 고유한 난수
             
             hx, cx = self.initialize_lstm()
-            self.epi_rew_vec = np.zeros((self.env_info["n_agents"], len(REWARD_PARAM)), dtype=np.float32)
-            dead_agents_vec = torch.zeros(self.env_info["n_agents"])
+            self.epi_rew_vec = jnp.zeros((self.env_info["n_agents"], len(REWARD_PARAM)), dtype=jnp.float32)
+            dead_agents_vec = jnp.zeros(self.env_info["n_agents"], dtype=jnp.int16)
             
             is_first = True
             # agent_tag = [] # TODO: 디버그 완료 후, 제거 필요
             # is_full = [False] # TODO: 디버그 완료 후, 제거 필요
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
-                act_dict = self.model.act(obs_dict, hx, cx)
-                self.set_default_actions(act_dict)
+                act_dict = jax_model_act(self.model, obs_dict, hx, cx)
                 
-                # check_act_avail(self.env, act_dict, self.env_info["n_agents"])
-                # check_agent_id(self.env.agents, self.env_info["n_agents"], agent_tag, is_full)
+                self.set_default_actions(act_dict)
                 
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
                 # self.env.render() # Uncomment for rendering
 
                 self.epi_rew_vec += rew_vec
-                done_vec = torch.ones(self.env_info["n_agents"]) if terminated else torch.zeros(self.env_info["n_agents"])
+                done_vec = jnp.ones(self.env_info["n_agents"]) if terminated else jnp.zeros(self.env_info["n_agents"])
                 
                 roll_out = self.create_rollout_dict(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
                 # roll_out = self.create_rollout_dict_except_already_dead(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
@@ -267,19 +232,16 @@ class TestWorker(Worker):
 
             hx, cx = self.initialize_lstm()
 
-            dead_agents_vec = torch.zeros(self.env_info["n_agents"])
+            dead_agents_vec = jnp.zeros(self.env_info["n_agents"])
             
             agent_tag = [] # TODO: 디버그 완료 후, 제거 필요
             is_full = [False] # TODO: 디버그 완료 후, 제거 필요
             
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
-                act_dict = self.model.act(obs_dict, hx, cx)
+                act_dict = jax_model_act(self.model, obs_dict, hx, cx)
                 self.set_default_actions(act_dict)
-                
-                # check_act_avail(self.env, act_dict, self.env_info["n_agents"])
-                check_agent_id(self.env.agents, self.env_info["n_agents"], agent_tag, is_full)
-                
+                                
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
                 self.env.render() # Uncomment for rendering
                 

@@ -2,9 +2,7 @@ import time
 import zmq
 import zmq.asyncio
 import asyncio
-
-import numpy as np
-# import multiprocessing as mp
+import jax
 
 from abc import ABC, abstractmethod
 from .storage_module.shared_batch import SMInterface
@@ -17,6 +15,7 @@ from utils.utils import (
     decode,
     flatten,
     # counted,
+    select_least_used_jax_gpu,
 )
 
 
@@ -36,6 +35,13 @@ class LearnerStorageBase(ABC):
         self.args = args
         self.env_space = env_space
         self.stop_event = stop_event
+        
+        # Select device
+        #TODO: 멀티 GPU일 경우 learner와 learner-storage의 디바이스가 다를 수 있음..?
+        device_ = select_least_used_jax_gpu()
+        # device = jax.devices('gpu')[0] if jax.devices('gpu') else jax.devices('cpu')[0]
+        device = device if device_ else jax.devices("cpu")[0] # 기본적으로 Learner 쪽은 Cuda 디바이스
+        jax.config.update('jax_default_device', device)
         
         self.shm_ref = shm_ref
         self.lock_manager: LockManager = lock_manager

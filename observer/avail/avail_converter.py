@@ -1,5 +1,8 @@
 import ctypes
+
 import numpy as np
+# import jax
+import jax.numpy as jnp
 
 from utils.utils import *
 
@@ -18,7 +21,7 @@ class Avail():
         """가공전 avail 정보"""
         
         # TODO: FLEE 행동은 커스텀 디자인 행동이기 때문에, avail_total_act -> 에서는 avail 여부를 확인할 수 없음
-        avail_total_act = np.array(self.observer.env_core.get_avail_actions(), dtype=np.float32)
+        avail_total_act = jnp.array(self.observer.env_core.get_avail_actions(), dtype=jnp.float32)
         assert avail_total_act.shape == (self.observer.n_agents, self.observer.n_actions)
         return avail_total_act
 
@@ -102,7 +105,7 @@ class Avail():
         여기서 "target~": 아군 혹은 적군의, 초기 생성 최대 인원수 까지를 -> 타겟팅 가능 인덱스로 지정
         """
         
-        avail_act = np.zeros((self.observer.n_agents, self.observer.dim_act), dtype=np.float32) # (n_ally, dim_act)
+        avail_act = jnp.zeros((self.observer.n_agents, self.observer.dim_act), dtype=jnp.float32) # (n_ally, dim_act)
         avail_act[:, NO_OP_IDX] = avail_total_act[:, NO_OP_IDX] # no-op
         avail_act[:, STOP_IDX] = avail_total_act[:, STOP_IDX] # stop
         avail_act[:, MOVE_IDX] = avail_total_act[:, MOVE_IDX: MOVE_IDX+self.observer.dim_move].any(-1) # move
@@ -121,7 +124,7 @@ class Avail():
         여기서 "target~": 아군 혹은 적군의, 초기 생성 최대 인원수 까지를 -> 타겟팅 가능 인덱스로 지정
         """
         
-        avail_move = np.zeros((self.observer.n_agents, self.observer.dim_move), dtype=np.float32) # (n_ally, dim_move)
+        avail_move = jnp.zeros((self.observer.n_agents, self.observer.dim_move), dtype=jnp.float32) # (n_ally, dim_move)
         avail_move[:, 0] = avail_total_act[:, MOVE_NORTH_IDX] # north
         avail_move[:, 1] = avail_total_act[:, MOVE_SOUTH_IDX] # south
         avail_move[:, 2] = avail_total_act[:, MOVE_EAST_IDX] # east
@@ -137,7 +140,7 @@ class Avail():
         여기서 "target~": 아군 혹은 적군의, 초기 생성 최대 인원수 까지를 -> 타겟팅 가능 인덱스로 지정
         """
         
-        avail_target = np.zeros((self.observer.n_agents, self.observer.dim_target), dtype=np.float32) # (n_ally, dim_target)
+        avail_target = jnp.zeros((self.observer.n_agents, self.observer.dim_target), dtype=jnp.float32) # (n_ally, dim_target)
         avail_target[:, :] = avail_total_act[:, MOVE_IDX+self.observer.dim_move:-1] # targets / TODO: FLEE 행동 대처
 
         return avail_target

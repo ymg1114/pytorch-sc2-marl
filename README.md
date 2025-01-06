@@ -27,6 +27,14 @@ Build the library for your system or use pre-built binaries for convenience.
   - **Windows**: `*.dll`
   - **Linux**: `*.so`
 
+## Warning
+WSL2 and NVIDIA-GPU
+According to the [JAX official GitHub repository](https://github.com/jax-ml/jax), using NVIDIA GPUs in WSL2 is still considered "experimental". It is recommended to use a native Linux environment instead for better stability.
+
+Compatibility of NVIDIA Driver, CUDA Toolkit, and cuDNN
+Ensure strict compatibility between the NVIDIA driver, CUDA Toolkit, and cuDNN versions.
+Any incompatibility here could result in numerous errors throughout the JAX project and significantly impact the overall code functionality.
+
 ## Training Results
 `num_worker: 30`
 

@@ -1,51 +1,100 @@
-import numpy as np
+import os
+import time
+import asyncio
+# import numpy as np
 
-from typing import Optional
+from typing import NamedTuple, Optional, Dict, List, Tuple
 from functools import partial
 
 import jax
 import jax.numpy as jnp
 import distrax
 
+from flax import nnx
+from flax.core import FrozenDict
+
+from utils.utils import ExecutionTimer
+
 from rewarder.rewarder import REWARD_PARAM
 
 
+# Normalizing 's'
+ALPHA = 0.99
+Q_HIGH = 0.95
+Q_LOW = 0.05
+
+
+# IMPALA HyperParams
+RHO_BAR = 0.8
+C_BAR = 1.0
+
+
+class HyperParams(NamedTuple):
+    gamma: float
+    lmbda: float
+    eps_clip: float
+    policy_loss_coef: float
+    value_loss_coef: float
+    entropy_coef: float
+    reward_param: Tuple[Tuple[str, float], ...]
+    mine_feats_names: Tuple[str, ...]
+
+
+class TrainingBatch(NamedTuple):
+    obs_dict: FrozenDict[str, jax.Array]
+    act_dict: FrozenDict[str, jax.Array]
+    rew_dict: FrozenDict[str, jax.Array]
+    info_dict: FrozenDict[str, jax.Array]
+    bins: jax.Array
+    scale: jax.Array
+
+
+@partial(jax.jit, static_argnames=["device"])
+def move_to_device(batch_dict, device):
+    return FrozenDict(jax.tree.map(lambda v: jax.device_put(v, device), batch_dict))
+
+
+@partial(jax.jit, static_argnames=["device"])
+def jax_device_movement(batch_dict, device):
+    obs_dict = move_to_device(batch_dict["obs"], device)
+    act_dict = move_to_device(batch_dict["act"], device)
+    rew_dict = move_to_device(batch_dict["rew"], device)
+    info_dict = move_to_device(batch_dict["info"], device)
+    return obs_dict, act_dict, rew_dict, info_dict
+
+
 @jax.jit
-def append_loss(trg_loss, src_loss=None):
+def append_loss(trg_loss, src_loss=jnp.nan):
     return jax.lax.cond(
-        src_loss is None,
-        lambda _: trg_loss,
-        lambda src_loss: jax.lax.cond(
+        jnp.isnan(src_loss).any(),
+        lambda: trg_loss,
+        lambda: jax.lax.cond(
             jnp.isnan(trg_loss).any(),
-            lambda _: src_loss,
-            lambda _: src_loss + trg_loss,
-            operand=None
+            lambda: src_loss,
+            lambda: src_loss + trg_loss,
         ),
-        operand=src_loss
+        operand=None
     )
 
 
-@jax.jit
+@partial(jax.jit, static_argnums=(1,))
 @partial(jax.vmap, in_axes=(0, None), out_axes=0)
 def goal_curr_alive_mine_mask(obs_mine, mine_feats_names):
     # Extract observations
-    obs_mine = obs_mine[:, 1:]  # next-obs
+    # curr_obs_mine = obs_mine[:, :-1] # current-obs 개념 / Considering Batch-Dim
+    curr_obs_mine = obs_mine[:-1, ...]  # current-obs 개념
 
-    curr_obs_mine = obs_mine[:, :-1] # current-obs 개념
-
-    # assert obs_mine.shape[:-1] == obs_ally.shape[:-1] == obs_enemy.shape[:-1]
-    
-    # current 기준, 살아있는 나 (mine) 여부 확인, Shape: [Batch, Seq]
+    # current 기준, 살아있는 나 (mine) 여부 확인, Shape: [Seq, Dim]
     curr_mine_health = curr_obs_mine[..., mine_feats_names.index('own_health')]
     valid_mine_mask = curr_mine_health > 0  # current 기준, 살아있는 나 (mine) 여부 확인
-    
-    # Expand dimensions for compatibility (add trailing dim for [Batch, Seq, 1])
+
+    # Expand dimensions for compatibility (add trailing dim for [Seq, 1])
     valid_mine_mask = jnp.expand_dims(valid_mine_mask, axis=-1)
-    
+
     return valid_mine_mask
 
 
-@jax.jit
+@partial(jax.jit, donate_argnames="deltas")
 @partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
 def compute_gae(
     deltas,
@@ -83,7 +132,7 @@ def compute_gae(
     return returns
 
 
-@jax.jit
+@partial(jax.jit, donate_argnames=["behav_log_probs", "is_fir", "rewards"])
 @partial(jax.vmap, in_axes=(0, 0, 0, 0, 0, None, None, None), out_axes=(0, 0, 0))
 def compute_v_trace(
     behav_log_probs,
@@ -92,111 +141,104 @@ def compute_v_trace(
     rewards,
     values,
     gamma,
-    rho_bar=0.8,
-    c_bar=1.0,
+    rho_bar,
+    c_bar,
 ):
     # Importance sampling weights (rho)
     rho = jnp.exp(
-        target_log_probs[:, :-1] - behav_log_probs[:, :-1]
-    )  # a/b == exp(log(a)-log(b))
-    # rho_clipped = jnp.clip(rho, max=rho_bar)
+        target_log_probs[:-1, ...] - behav_log_probs[:-1, ...]
+    )
     rho_clipped = jnp.clip(rho, min=0.1, max=rho_bar)
 
-    # truncated importance weights (c)
+    # Truncated importance weights (c)
     c = jnp.exp(
-        target_log_probs[:, :-1] - behav_log_probs[:, :-1]
-    )  # a/b == exp(log(a)-log(b))
+        target_log_probs[:-1, ...] - behav_log_probs[:-1, ...]
+    )
     c_clipped = jnp.clip(c, max=c_bar)
 
-    td_target = rewards[:, :-1] + gamma * (1 - is_fir[:, 1:]) * values[:, 1:]
-    deltas = rho_clipped * (td_target - values[:, :-1])  # TD-Error with 보정
+    # Considering Batch-Dim
+    td_target = rewards[:-1, ...] + gamma * (1 - is_fir[1:, ...]) * values[1:, ...]
+    deltas = rho_clipped * (td_target - values[:-1, ...])  # TD-Error with clipping 보정
 
     def scan_fn(carry, t):
         vs_minus_v_xs_next = carry
         vs_minus_v_xs = (
-            deltas[:, t]
-            + c_clipped[:, t]
-            * (gamma * (1 - is_fir))[:, t + 1]
-            * vs_minus_v_xs_next[:, t + 1]
+            deltas[t, ...]
+            + c_clipped[t, ...]
+            * (gamma * (1 - is_fir[t + 1, ...]) * vs_minus_v_xs_next[t + 1, ...])
         )
-        updated_carry = carry.at[:, t].set(vs_minus_v_xs)
-        return updated_carry, vs_minus_v_xs
+        updated_carry = carry.at[t, ...].set(vs_minus_v_xs)
+        return updated_carry, None
 
-    init_carry = jnp.zeros_like(values, device=values.device)
-    vs_minus_v_xs, _ = jax.lax.scan(scan_fn, init_carry, jnp.arange(deltas.shape[1])[::-1])
+    init_carry = jnp.zeros_like(values)
+    vs_minus_v_xs, _ = jax.lax.scan(scan_fn, init_carry, jnp.arange(deltas.shape[0])[::-1])
 
-    # vs_minus_v_xs는 V-trace를 통해 수정된 가치 추정치
+    # vs_minus_v_xs를 V-trace를 통해 수정된 가치 추정치
     values_target = values + vs_minus_v_xs
 
     advantages = rho_clipped * (
-        rewards[:, :-1]
-        + gamma * (1 - is_fir[:, 1:]) * values_target[:, 1:]
-        - values[:, :-1]
+        rewards[:-1, ...]
+        + gamma * (1 - is_fir[1:, ...]) * values_target[1:, ...]
+        - values[:-1, ...]
     )
 
     return rho_clipped, advantages, values_target
 
 
-@jax.jit
+@partial(jax.jit, donate_argnames=["behav_log_probs", "is_fir", "rewards"])
 @partial(jax.vmap, in_axes=(0, 0, 0, 0, 0, None, None, None), out_axes=(0, 0, 0))
 def compute_v_trace_twohot(
     behav_log_probs,
     target_log_probs,
     is_fir,
     rewards,
-    values,
+    v_res,
     gamma,
-    twohot_decoding,
-    rho_bar=0.8,
-    c_bar=1.0,
+    rho_bar,
+    c_bar,
 ):
-    v_res = twohot_decoding(values)
-    
     # Importance sampling weights (rho)
     rho = jnp.exp(
-        target_log_probs[:, :-1] - behav_log_probs[:, :-1]
-    )  # a/b == exp(log(a)-log(b))
-    # rho_clipped = torch.clamp(rho, max=rho_bar)
+        target_log_probs[:-1, ...] - behav_log_probs[:-1, ...]
+    )
     rho_clipped = jnp.clip(rho, min=0.1, max=rho_bar)
 
-    # truncated importance weights (c)
+    # Truncated importance weights (c)
     c = jnp.exp(
-        target_log_probs[:, :-1] - behav_log_probs[:, :-1]
-    )  # a/b == exp(log(a)-log(b))
+        target_log_probs[:-1, ...] - behav_log_probs[:-1, ...]
+    )
     c_clipped = jnp.clip(c, max=c_bar)
-    
-    td_target_res = rewards[:, :-1] + gamma * (1 - is_fir[:, 1:]) * v_res[:, 1:]
-    deltas = rho_clipped * (td_target_res - v_res[:, :-1])  # TD-Error with 보정
 
-    B, S, L = values.shape
-    
+    td_target_res = rewards[:-1, ...] + gamma * (1 - is_fir[1:, ...]) * v_res[1:, ...]
+    deltas = rho_clipped * (td_target_res - v_res[:-1, ...])  # TD-Error with clipping 보정
+
     def scan_fn(carry, t):
         vs_minus_v_xs_next = carry
         vs_minus_v_xs = (
-            deltas[:, t]
-            + c_clipped[:, t]
-            * (gamma * (1 - is_fir))[:, t + 1]
-            * vs_minus_v_xs_next[:, t + 1]
+            deltas[t, ...]
+            + c_clipped[t, ...]
+            * (gamma * (1 - is_fir[t + 1, ...]) * vs_minus_v_xs_next[t + 1, ...])
         )
-        updated_carry = carry.at[:, t].set(vs_minus_v_xs)
-        return updated_carry, vs_minus_v_xs
+        updated_carry = carry.at[t, ...].set(vs_minus_v_xs)
+        return updated_carry, None
 
-    init_carry = jnp.zeros((B, S, 1), device=values.device)
-    vs_minus_v_xs, _ = jax.lax.scan(scan_fn, init_carry, jnp.arange(deltas.shape[1])[::-1])
+    init_carry = jnp.zeros_like(v_res)
+    vs_minus_v_xs, _ = jax.lax.scan(scan_fn, init_carry, jnp.arange(deltas.shape[0])[::-1])
 
     # vs_minus_v_xs는 V-trace를 통해 수정된 가치 추정치
     values_target = v_res + vs_minus_v_xs
 
     advantages = rho_clipped * (
-        rewards[:, :-1]
-        + gamma * (1 - is_fir[:, 1:]) * values_target[:, 1:]
-        - v_res[:, :-1]
+        rewards[:-1, ...]
+        + gamma * (1 - is_fir[1:, ...]) * values_target[1:, ...]
+        - v_res[:-1, ...]
     )
 
     return rho_clipped, advantages, values_target
 
 
 @jax.jit
+@partial(jax.vmap, in_axes=(0, 0), out_axes=0)
 def kldivergence(logits_p, logits_q):
     """
     Compute KL divergence between two categorical distributions.
@@ -210,6 +252,7 @@ def kldivergence(logits_p, logits_q):
 
 
 @jax.jit
+@partial(jax.vmap, in_axes=(0, 0, 0), out_axes=0)
 def cal_log_probs(logit, sampled, on_select):
     """
     Calculate log probabilities for sampled values.
@@ -225,11 +268,12 @@ def cal_log_probs(logit, sampled, on_select):
     
     # dist = distrax.Categorical(probs=jax.nn.softmax(logit, axis=-1))
     dist = distrax.Categorical(logits=logit)
-    log_probs = dist.log_prob(jnp.squeeze(sampled, -1))
+    log_probs = dist.log_prob(sampled.squeeze(-1))
     return on_select * log_probs[..., jnp.newaxis]
 
 
 @jax.jit
+@partial(jax.vmap, in_axes=(0, 0), out_axes=0)
 def cross_entropy_loss(logits, targets):
     """
     Compute the cross-entropy loss.
@@ -261,15 +305,16 @@ def cal_hier_log_probs(act_dict):
     return hier_log_probs
 
 
-@jax.jit
-def rew_vec_to_scaled_scalar(rew_dict):
+@partial(jax.jit, static_argnums=1)
+def rew_vec_to_scaled_scalar(rew_dict, reward_param):
     rew_vec = rew_dict["rew_vec"]
-    
-    # B, S, D = rew_vec.shape
-    # assert D == len(REWARD_PARAM)
 
-    weights = jnp.array(list(REWARD_PARAM.values()), dtype=rew_vec.dtype, device=rew_vec.device)
+    # B, S, D = rew_vec.shape
+    # assert D == len(reward_param)
+
+    weights = jnp.array([value for _, value in reward_param], dtype=rew_vec.dtype)
     scaled_rew_vec = rew_vec * weights
+
     return jnp.sum(scaled_rew_vec, axis=-1, keepdims=True)
 
 
@@ -390,11 +435,11 @@ class Normalizier():
         return returns / jnp.maximum(1, s)
     
     @staticmethod
-    @partial(jax.jit, static_argnums=(2,))
+    @partial(jax.jit, static_argnums=(2,3,4))
     def calculate_s(
         returns: jnp.ndarray,
+        previous_s: jnp.ndarray,
         alpha: float = 0.99,
-        previous_s: Optional[jnp.ndarray] = None,
         q_high: float = 0.95,
         q_low: float = 0.05
     ) -> jnp.ndarray:
@@ -403,14 +448,14 @@ class Normalizier():
         This function applies an exponential moving average (EMA) to smooth the value of s.
         
         Args:
-            returns (torch.Tensor): Tensor of shape (Batch, Sequence, 1) containing the return estimates.
+            returns (jnp.ndarray): Tensor of shape (Batch, Sequence, 1) containing the return estimates.
+            previous_s (jnp.ndarray): Previous value of s for EMA. If None, this is the first iteration.
             alpha (float): Smoothing factor for the exponential moving average (EMA decay).
-            previous_s (Optional[torch.Tensor]): Previous value of s for EMA. If None, this is the first iteration.
             q_high (float): Upper quantile for normalization (default is 0.95).
             q_low (float): Lower quantile for normalization (default is 0.05).
             
         Returns:
-            torch.Tensor: The normalization factor s (a scalar tensor).
+            jnp.ndarray: The normalization factor s (a scalar tensor).
         """
         
         # Remove the last dimension to calculate percentiles across the Batch
@@ -426,11 +471,112 @@ class Normalizier():
         # Calculate the current s value as the mean of the differences across the sequence
         s_current = jnp.mean(diff)  # Scalar value
 
-        # If previous_s is None, this is the first iteration
-        if previous_s is None:
+        # Condition function
+        def if_nan(previous_s, s_current):
+            # Case where previous_s is nan (None equivalent)
             return s_current
 
-        # Apply the modified EMA to favor the current s more
-        s = (1 - alpha) * previous_s + alpha * s_current
+        def if_not_nan(previous_s, s_current):
+            # Apply EMA logic when previous_s is not None
+            return (1 - alpha) * previous_s + alpha * s_current
 
-        return s
+        # Use lax.cond to handle the conditional logic
+        return jax.lax.cond(
+            jnp.isnan(previous_s),  # Check if previous_s is nan
+            if_nan,
+            if_not_nan,
+            previous_s,
+            s_current,
+        )
+
+
+async def learning(parent, train_step, timer: ExecutionTimer):
+    assert hasattr(parent, "batch_queue")
+    scale = parent.scale  # 초기화
+
+    while not parent.stop_event.is_set():
+        batch_dict = None
+        with timer.timer("learner-throughput", check_throughput=True):
+            with timer.timer("learner-batching-time"):
+                batch_dict = await parent.batch_queue.get()
+
+        if batch_dict is not None:
+            with timer.timer("learner-forward-time"):
+                # Basically, mini-batch-learning (batch, seq, feat)
+                assert "obs" in batch_dict
+                assert "act" in batch_dict
+                assert "rew" in batch_dict
+                assert "info" in batch_dict
+
+                # Move data to the appropriate device
+                # obs_dict = {k: jax.device_put(v, parent.device) for k, v, in batch_dict["obs"].items()}
+                # act_dict = {k: jax.device_put(v, parent.device) for k, v, in batch_dict["act"].items()}
+                # rew_dict = {k: jax.device_put(v, parent.device) for k, v, in batch_dict["rew"].items()}
+                # info_dict = {k: jax.device_put(v, parent.device) for k, v, in batch_dict["info"].items()}
+                obs_dict, act_dict, rew_dict, info_dict = jax_device_movement(
+                    batch_dict, parent.device
+                )
+
+                training_batch = TrainingBatch(
+                    obs_dict=obs_dict,
+                    act_dict=act_dict,
+                    rew_dict=rew_dict,
+                    info_dict=info_dict,
+                    bins=parent.model.bins,
+                    scale=scale,
+                )
+
+                hyperparams = HyperParams(
+                    gamma=parent.args.gamma,
+                    lmbda=parent.args.lmbda,
+                    eps_clip=parent.args.eps_clip,
+                    policy_loss_coef=parent.args.policy_loss_coef,
+                    value_loss_coef=parent.args.value_loss_coef,
+                    entropy_coef=parent.args.entropy_coef,
+                    reward_param=tuple(REWARD_PARAM.items()),
+                    mine_feats_names=tuple(parent.env_space["others"]["mine_feats_names"]),
+                )
+
+                # epoch-learning
+                for _ in range(parent.args.K_epoch):
+                    # 노말라이징 scale을 지속적으로 업데이트
+                    scale = train_step(
+                        parent.model,
+                        parent.optimizer,
+                        parent.metrics,
+                        hyperparams,
+                        training_batch,
+                    )
+
+                    with timer.timer("learner-backward-time"):
+                        print(
+                            "loss: {:.5f} original_value_loss: {:.5f} original_policy_loss: {:.5f} "
+                            "original_policy_entropy: {:.5f} ratio-avg: {:.5f}".format(
+                                parent.metrics.total_loss.compute(),
+                                parent.metrics.value_loss.compute(),
+                                parent.metrics.policy_loss.compute(),
+                                parent.metrics.policy_entropy.compute(),
+                                parent.metrics.avg_ratio.compute(),
+                            )
+                        )
+
+                parent.pub_model(nnx.state(parent.model).to_pure_dict())
+
+                if parent.idx % parent.args.loss_log_interval == 0:
+                    await parent.log_loss_tensorboard(timer)
+
+                if parent.idx % parent.args.model_save_interval == 0:
+                    parent.model.save_model_weight(
+                        os.path.join(parent.args.model_dir, f"{parent.args.algo}_{parent.idx}.pt"),
+                        parent.idx,
+                        scale,
+                        parent.model,
+                        nnx.state(parent.optimizer).to_pure_dict(),
+                    )
+
+                parent.idx += 1
+
+            if parent.heartbeat is not None:
+                parent.heartbeat.value = time.monotonic()
+
+        await asyncio.sleep(1e-4)

@@ -1,13 +1,12 @@
-torch
 uvloop
 psutil
-blosc2
+blosc2==2.7.1
 zmq
 git+https://github.com/oxwhirl/smacv2.git
 gymnasium
 smac
+tensorflow==2.18.0
 tensorboard
-jax
-"jax[cuda12]"
+"jax[cuda12]" # jax for cpu-version
 flax
 distrax

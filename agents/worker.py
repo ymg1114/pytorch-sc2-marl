@@ -22,7 +22,7 @@ class Worker:
     def __init__(
         self,
         args,
-        model_cls,
+        model_cls: "ModelSingle",
         worker_name,
         stop_event,
         manager_ip,
@@ -34,13 +34,15 @@ class Worker:
     ):
         self.args = args
         self.device = jax.devices("cpu")[0]  # cpu
-        print(f"worker device: {self.args.device}")
+        jax.config.update("jax_default_device", self.device)
+        print(f"Worker: {worker_name}, device: {self.device}")
         
         self.env_space = env_space
 
-        model: "ModelSingle" = model_cls(self.args, self.env_space)
+        model = model_cls(self.args, self.env_space)
         self.model, _  = model_cls.load_model_weight(self.args, model)
-
+        # self.abstract_model = nnx.eval_shape(lambda: self.model)
+        
         self.worker_name = worker_name
         self.stop_event = stop_event
         self.heartbeat = heartbeat
@@ -91,14 +93,16 @@ class Worker:
         abstract_model = nnx.eval_shape(lambda: self.model)
         graphdef, abstract_state = nnx.split(abstract_model)
         abstract_state.replace_by_pure_dict(pure_dict)
-        return nnx.merge(graphdef, abstract_state)
+        # return nnx.merge(graphdef, abstract_state)
+        nnx.update(self.model, abstract_state)
     
     async def req_model(self):
         while not self.stop_event.is_set():
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             if protocol is Protocol.Model:
                 pure_dict = jax.device_put(data, self.device)
-                self.model = self.load_flax_model(pure_dict) # reload learned-model from learner
+                # self.model = self.load_flax_model(pure_dict) # reload learned-model from learner
+                self.load_flax_model(pure_dict)
                 
             await asyncio.sleep(0.1)
 
@@ -179,7 +183,7 @@ class Worker:
             
             hx, cx = self.initialize_lstm()
             self.epi_rew_vec = jnp.zeros((self.env_info["n_agents"], len(REWARD_PARAM)), dtype=jnp.float32)
-            dead_agents_vec = jnp.zeros(self.env_info["n_agents"], dtype=jnp.int16)
+            dead_agents_vec = jnp.zeros(self.env_info["n_agents"], dtype=jnp.int16) # 초기화
             
             is_first = True
             # agent_tag = [] # TODO: 디버그 완료 후, 제거 필요
@@ -187,7 +191,6 @@ class Worker:
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
                 act_dict = jax_model_act(self.model, obs_dict, hx, cx)
-                
                 self.set_default_actions(act_dict)
                 
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
@@ -196,8 +199,8 @@ class Worker:
                 self.epi_rew_vec += rew_vec
                 done_vec = jnp.ones(self.env_info["n_agents"]) if terminated else jnp.zeros(self.env_info["n_agents"])
                 
-                roll_out = self.create_rollout_dict(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
-                # roll_out = self.create_rollout_dict_except_already_dead(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, dead_agents_vec)
+                roll_out = self.create_rollout_dict(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, info["dead_agents_vec"])
+                # roll_out = self.create_rollout_dict_except_already_dead(_id, obs_dict, act_dict, rew_vec, is_first, done_vec, info["dead_agents_vec"])
                 if roll_out is not None and isinstance(roll_out, dict):
                     await self.pub_rollout(**roll_out)
 
@@ -231,12 +234,10 @@ class TestWorker(Worker):
             self.env.reset()
 
             hx, cx = self.initialize_lstm()
-
-            dead_agents_vec = jnp.zeros(self.env_info["n_agents"])
+            dead_agents_vec = jnp.zeros(self.env_info["n_agents"], dtype=jnp.int16) # 초기화
             
-            agent_tag = [] # TODO: 디버그 완료 후, 제거 필요
-            is_full = [False] # TODO: 디버그 완료 후, 제거 필요
-            
+            # agent_tag = [] # TODO: 디버그 완료 후, 제거 필요
+            # is_full = [False] # TODO: 디버그 완료 후, 제거 필요
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
                 act_dict = jax_model_act(self.model, obs_dict, hx, cx)
@@ -256,5 +257,5 @@ class TestWorker(Worker):
 
                 if terminated:
                     # if not info.get("battle_won", True):
-                    #     assert bool(dead_agents_vec.all()) # 패배한 경우, 모든 에이전트는 반드시 사망해야 함
+                    #     assert bool(info["dead_agents_vec"].all()) # 패배한 경우, 모든 에이전트는 반드시 사망해야 함
                     break

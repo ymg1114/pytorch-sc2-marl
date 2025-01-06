@@ -20,7 +20,7 @@ def collect_data(values):
 
 def make_as_array_jax(trajectory_obj):
     """
-    Optimized version of make_as_array using JAX vmap.
+    Optimized version of make_as_array using JAX jit.
 
     Args:
         trajectory_obj (Trajectory2): An instance of the Trajectory2 class.
@@ -41,7 +41,7 @@ def make_as_array_jax(trajectory_obj):
     # Convert list of dictionaries into a dictionary of lists
     structured_data = {key: [rollout[key] for rollout in data_list] for key in keys}
     
-    # Use vmap to process all keys
+    # Use jit func to process all keys
     refrased_rollout_data = {key: collect_data(structured_data[key]) for key in keys}
 
     return refrased_rollout_data
@@ -66,7 +66,7 @@ def make_as_array_jax(trajectory_obj):
 def rearrange_data_origin(data):
     arranged_data = defaultdict(dict)
     
-    ids = data["id"].tolist()  # 각 경기 별 고유 에이전트 id
+    ids = data["id"]  # 각 경기 별 고유 에이전트 id
     obs_dict = data["obs_dict"]
     act_dict = data["act_dict"]
     rew_vec = data["rew_vec"]

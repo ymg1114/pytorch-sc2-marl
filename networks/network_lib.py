@@ -1,5 +1,7 @@
-import jax
+import pickle
 import distrax
+import flax
+import jax
 import jax.numpy as jnp
 
 from typing import Tuple
@@ -8,6 +10,24 @@ from agents.learner_module.learner_lib import Normalizier
 
 
 Symlog = Normalizier.symlog
+
+
+def save_state(to_state, path):
+    try:
+        with open(path, "wb") as f:
+            pickle.dump(flax.serialization.to_state_dict(to_state), f)
+    except IOError as e:
+        print(f"Error saving state: {e}")
+
+
+def load_state(to_state, path):
+    try:
+        with open(path, "rb") as f:
+            from_state = pickle.load(f)
+        return flax.serialization.from_state_dict(to_state, from_state["model_pure_dict"]), from_state
+    except (IOError, KeyError) as e:
+        print(f"Error loading state: {e}")
+        return None, None
 
 
 def remove_keys_from_state(state, keys_to_remove):
@@ -66,10 +86,10 @@ def build_dist(logit: jnp.ndarray, avail: jnp.ndarray):
     """Mask logits based on availability and calculate probabilities."""
     
     # assert logit.shape == avail.shape
-    avail = jnp.where(avail == 0, jnp.array(-1e10, dtype=logit.dtype, device=logit.device), jnp.array(1.0, dtype=logit.dtype, device=logit.device))
+    avail = jnp.where(avail == 0, jnp.array(-1e10, dtype=logit.dtype), jnp.array(1.0, dtype=logit.dtype))
     masked_logit = logit + avail
     # probs = jax.nn.softmax(masked_logit, axis=-1)
-    return distrax.Categorical(logits=masked_logit).sample()
+    return distrax.Categorical(logits=masked_logit)
 
 
 # @jax.jit

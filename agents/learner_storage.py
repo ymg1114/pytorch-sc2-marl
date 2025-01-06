@@ -13,7 +13,7 @@ from utils.utils import (
     Protocol,
     # mul,
     decode,
-    flatten,
+    # flatten,
     # counted,
     select_least_used_jax_gpu,
 )
@@ -40,7 +40,7 @@ class LearnerStorageBase(ABC):
         #TODO: 멀티 GPU일 경우 learner와 learner-storage의 디바이스가 다를 수 있음..?
         device_ = select_least_used_jax_gpu()
         # device = jax.devices('gpu')[0] if jax.devices('gpu') else jax.devices('cpu')[0]
-        device = device if device_ else jax.devices("cpu")[0] # 기본적으로 Learner 쪽은 Cuda 디바이스
+        device = device_ if device_ else jax.devices("cpu")[0] # 기본적으로 Learner 쪽은 Cuda 디바이스
         jax.config.update('jax_default_device', device)
         
         self.shm_ref = shm_ref
@@ -121,7 +121,7 @@ class LearnerStorageSingle(LearnerStorageBase, SMInterface):
                 
                 _T = trajectory[key]
                 assert _T.shape == (S, D)
-                return flatten(_T)
+                return _T.flatten()
 
             def _update_shared_memory(space):
                 """공유 메모리에 쓰기 작업 수행. Lock을 도입해
@@ -168,7 +168,7 @@ class LearnerStorageMulti(LearnerStorageBase):
                         
                         _T = trajectory[key]
                         assert _T.shape == (S, D)
-                        return flatten(_T)
+                        return _T.flatten()
 
                     def _update_shared_memory(space):
                         """공유 메모리에 쓰기 작업 수행. Lock을 도입해

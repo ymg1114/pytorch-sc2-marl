@@ -12,6 +12,8 @@ from utils.utils import Position, lib
 if TYPE_CHECKING:
     from observer.observer import Observer
 
+from .avail_converter_lib import avail_act_parsing_jit, avail_move_parsing_jit, avail_target_parsing_jit
+
 
 class Avail():
     def __init__(self, observer: "Observer"):
@@ -105,15 +107,22 @@ class Avail():
         여기서 "target~": 아군 혹은 적군의, 초기 생성 최대 인원수 까지를 -> 타겟팅 가능 인덱스로 지정
         """
         
-        avail_act = jnp.zeros((self.observer.n_agents, self.observer.dim_act), dtype=jnp.float32) # (n_ally, dim_act)
-        avail_act[:, NO_OP_IDX] = avail_total_act[:, NO_OP_IDX] # no-op
-        avail_act[:, STOP_IDX] = avail_total_act[:, STOP_IDX] # stop
-        avail_act[:, MOVE_IDX] = avail_total_act[:, MOVE_IDX: MOVE_IDX+self.observer.dim_move].any(-1) # move
-        avail_act[:, TARGET_IDX] = avail_total_act[:, MOVE_IDX+self.observer.dim_move:-1].any(-1) # target / TODO: FLEE 행동 대처
-
-        # TODO: -9999는 하드코드 임
+        # TODO: -9999는 하드코드임
         valid_flee_mask = (self.flee_positions_np["y"] != -9999) & (self.flee_positions_np["x"] != -9999)
-        avail_act[valid_flee_mask, FLEE_IDX] = 1.0
+        valid_flee_indices = jnp.where(valid_flee_mask)[0]
+
+        avail_act = avail_act_parsing_jit(
+            avail_total_act,
+            valid_flee_indices,
+            self.observer.n_agents,
+            self.observer.dim_act,
+            self.observer.dim_move,
+            NO_OP_IDX,
+            STOP_IDX,
+            MOVE_IDX,
+            TARGET_IDX,
+            FLEE_IDX,
+        )
         return avail_act
 
     def avail_move_parsing(self, avail_total_act):
@@ -124,12 +133,15 @@ class Avail():
         여기서 "target~": 아군 혹은 적군의, 초기 생성 최대 인원수 까지를 -> 타겟팅 가능 인덱스로 지정
         """
         
-        avail_move = jnp.zeros((self.observer.n_agents, self.observer.dim_move), dtype=jnp.float32) # (n_ally, dim_move)
-        avail_move[:, 0] = avail_total_act[:, MOVE_NORTH_IDX] # north
-        avail_move[:, 1] = avail_total_act[:, MOVE_SOUTH_IDX] # south
-        avail_move[:, 2] = avail_total_act[:, MOVE_EAST_IDX] # east
-        avail_move[:, 3] = avail_total_act[:, MOVE_WEST_IDX] # west
-
+        avail_move = avail_move_parsing_jit(
+            avail_total_act,
+            self.observer.n_agents,
+            self.observer.dim_move,
+            MOVE_NORTH_IDX,
+            MOVE_SOUTH_IDX,
+            MOVE_EAST_IDX,
+            MOVE_WEST_IDX,
+        )
         return avail_move
 
     def avail_target_parsing(self, avail_total_act):
@@ -140,9 +152,13 @@ class Avail():
         여기서 "target~": 아군 혹은 적군의, 초기 생성 최대 인원수 까지를 -> 타겟팅 가능 인덱스로 지정
         """
         
-        avail_target = jnp.zeros((self.observer.n_agents, self.observer.dim_target), dtype=jnp.float32) # (n_ally, dim_target)
-        avail_target[:, :] = avail_total_act[:, MOVE_IDX+self.observer.dim_move:-1] # targets / TODO: FLEE 행동 대처
-
+        avail_target = avail_target_parsing_jit(
+            avail_total_act,
+            self.observer.n_agents,
+            self.observer.dim_target,
+            MOVE_IDX,
+            self.observer.dim_move,
+        )
         return avail_target
 
     def get_avail(self):

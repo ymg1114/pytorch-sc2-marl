@@ -1,5 +1,5 @@
 import time
-import torch.multiprocessing as mp
+import multiprocessing as mp
 
 from contextlib import contextmanager
 

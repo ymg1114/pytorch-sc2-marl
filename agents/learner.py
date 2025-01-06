@@ -1,16 +1,15 @@
 import zmq
-import torch
+import optax
 import jax
 import jax.numpy as jnp
+
+from flax import nnx
+
 import asyncio
 import math
 
-import numpy as np
-from collections import defaultdict, deque
-from torch.distributions import Categorical, Uniform
-# from functools import partial
-
 import zmq.asyncio
+from collections import defaultdict
 
 from utils.lock import Mutex, LockManager
 from utils.utils import (
@@ -19,11 +18,9 @@ from utils.utils import (
     decode,
     ExecutionTimer,
     Params,
-    to_torch,
     # extract_values,
     select_least_used_jax_gpu,
 )
-from torch.optim import Adam, RMSprop
 
 from abc import ABC, abstractmethod
 from .storage_module.shared_batch import SMInterface
@@ -49,7 +46,7 @@ class LearnerBase(ABC):
         self,
         args,
         mutex,
-        model_cls,
+        model_cls : "ModelSingle",
         shm_ref,
         lock_manager,
         stop_event,
@@ -78,27 +75,41 @@ class LearnerBase(ABC):
 
         self.device = self.args.device
         self.idx = 0
-        self.scale = None
+        self.scale = jnp.nan # 초기화
         
-        model: "ModelSingle" = model_cls(self.args, self.env_space)
+        #TODO: manual 코드
+        self.metrics = nnx.MultiMetric(
+            total_loss=nnx.metrics.Average('total_loss'),
+            policy_loss=nnx.metrics.Average('policy_loss'),
+            value_loss=nnx.metrics.Average('value_loss'),
+            policy_entropy=nnx.metrics.Average('policy_entropy'),
+            scale=nnx.metrics.Average('scale'),
+            min_ratio=nnx.metrics.Average('min_ratio'),
+            max_ratio=nnx.metrics.Average('max_ratio'),
+            avg_ratio=nnx.metrics.Average('avg_ratio'),
+        )
 
-        self.model, restored_pure_dict = model_cls.load_model_weight(self.args, model, self.device)
-        if restored_pure_dict is not None:
-            self.idx = restored_pure_dict["log_idx"]
-            self.scale = restored_pure_dict["scale"]
-        
-        # TODO: torch 관련 코드 및 Optimizer를 -> jax, flax, optax로 변경
-        # self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
-        # # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr, eps=1e-5)
-        # if out_dict is not None:
-        #     self.optimizer.load_state_dict(out_dict["optim_state_dict"])
-            
-        self.CT = Categorical
+        model = model_cls(self.args, self.env_space)
+
+        self.model, overall_model_states = model_cls.load_model_weight(self.args, model, self.device)
+        if overall_model_states is not None:
+            self.idx = overall_model_states["log_idx"]
+            self.scale = overall_model_states["scale"]
+
+        tx = optax.chain(
+            optax.clip_by_global_norm(self.args.max_grad_norm),
+            optax.adam(learning_rate=self.args.lr),
+        )
+        self.optimizer = nnx.Optimizer(model, tx)
+        if overall_model_states is not None:
+            optim_graphdef, optim_state = nnx.split(self.optimizer)
+            optim_state.replace_by_pure_dict(overall_model_states["optim_pure_dict"])
+            nnx.update(self.optimizer, optim_state)
 
         self.zeromq_set(learner_ip, learner_worker_port)
-        
-        from torch.utils.tensorboard import SummaryWriter
-        self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
+
+        from flax.metrics import tensorboard
+        self.writer = tensorboard.SummaryWriter(log_dir=self.args.result_dir)  # tensorboard-log
         
     def __del__(self):  # 소멸자
         if hasattr(self, "pub_socket"):
@@ -106,6 +117,7 @@ class LearnerBase(ABC):
         if hasattr(self, "sub_socket"):
             self.sub_socket.close()
         if hasattr(self, "writer"):
+            # self.writer.flush()
             self.writer.close()
             
     def zeromq_set(self, learner_ip, learner_worker_port):
@@ -124,74 +136,40 @@ class LearnerBase(ABC):
             f"tcp://{learner_ip}:{int(learner_worker_port) + 1}"
         )  # publish fresh learner-model
 
-    def pub_model(self, model_state_dict):  # learner -> worker
-        self.pub_socket.send_multipart([*encode(Protocol.Model, model_state_dict)])
+    def pub_model(self, model_pure_dict):  # learner -> worker
+        self.pub_socket.send_multipart([*encode(Protocol.Model, model_pure_dict)])
 
-    async def log_loss_tensorboard(self, timer: ExecutionTimer, loss, detached_losses):
-        self.writer.add_scalar("total-loss", float(loss.item()), self.idx)
-        if "value-loss" in detached_losses:
-            self.writer.add_scalar(
-                "original-value-loss", detached_losses["value-loss"], self.idx
-            )
-
-        if "policy-loss" in detached_losses:
-            self.writer.add_scalar(
-                "original-policy-loss", detached_losses["policy-loss"], self.idx
-            )
-
-        if "policy-entropy" in detached_losses:
-            self.writer.add_scalar(
-                "original-policy-entropy", detached_losses["policy-entropy"], self.idx
-            )
-
-        if "ratio" in detached_losses:
-            self.writer.add_scalar(
-                "min-ratio", detached_losses["ratio"].min(), self.idx
-            )
-            self.writer.add_scalar(
-                "max-ratio", detached_losses["ratio"].max(), self.idx
-            )
-            self.writer.add_scalar(
-                "avg-ratio", detached_losses["ratio"].mean(), self.idx
-            )
-
-        if "scale" in detached_losses:
-            self.writer.add_scalar(
-                "actor-loss-eval-scale", detached_losses["scale"], self.idx
-            )
-
-        if "loss-temperature" in detached_losses:
-            self.writer.add_scalar(
-                "loss-temperature", detached_losses["loss-temperature"].mean(), self.idx
-            )
+    async def log_loss_tensorboard(self, timer: ExecutionTimer):
+        for k, v in self.metrics.compute().items():
+            self.writer.scalar(k, v, self.idx)
 
         if timer is not None and isinstance(timer, ExecutionTimer):
             for k, v in timer.timer_dict.items():
-                self.writer.add_scalar(
+                self.writer.scalar(
                     f"{k}-elapsed-mean-sec", sum(v) / (len(v) + 1e-6), self.idx
                 )
             for k, v in timer.throughput_dict.items():
-                self.writer.add_scalar(
+                self.writer.scalar(
                     f"{k}-transition-per-secs", sum(v) / (len(v) + 1e-6), self.idx
                 )
 
         if self.stat_q.qsize() > 0:
             stat_dict = await self.stat_q.get()
-            # stat_keys = list(sample_stat_dict.keys())
-
             for k, v in stat_dict.items():
-                if k != "epi_rew_vec":
+                if k == "epi_rev_vec":
                     tag = f"stat-{k}"
                     y = jnp.mean(v)
-                    self.writer.add_scalar(tag, y, self.idx)
+                    self.writer.scalar(tag, y, self.idx)
 
-            _mean_rew_vec = jnp.mean(stat_dict["epi_rew_vec"], axis=0)
-            
+            _mean_rev_vec = jnp.mean(stat_dict["epi_rev_vec"], axis=0)
+
             for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
                 tag = f"mean-weighted-reward-{r_param}"
-                weighted_reward = _mean_rew_vec[rdx] * weight
-                self.writer.add_scalar(tag, weighted_reward, self.idx)
-                        
+                weighted_reward = _mean_rev_vec[rdx] * weight
+                self.writer.scalar(tag, weighted_reward, self.idx)
+
+        self.metrics.reset()
+
     @ppo_awrapper(timer=timer)
     def learning_ppo(self): ...
 
@@ -263,7 +241,7 @@ class LearnerSingle(LearnerBase, SMInterface):
             for k, v in space.items():
                 assert hasattr(self, f"sh_{k}")
                 B, S, D = v.nvec  # Batch, Sequence, Dim
-                batch_dict[space_name][k] = to_torch(getattr(self, f"sh_{k}").reshape((B, S, D)))
+                batch_dict[space_name][k] = getattr(self, f"sh_{k}").reshape((B, S, D))
 
         _extract_batch("obs", self.env_space["obs"])
         _extract_batch("act", self.env_space["act"])
@@ -311,13 +289,13 @@ class LearnerMulti(LearnerBase):
                 _, S, D = v.nvec  # Batch, Sequence, Dim
                 N = shm_inf.get_count()
                 
-                tensor_data = to_torch(getattr(shm_inf, attr_name)[:math.prod((N, *v.nvec[1:]))]).reshape(-1, S, D)
+                jnp_tensor_data = getattr(shm_inf, attr_name)[:math.prod((N, *v.nvec[1:]))].reshape(-1, S, D)
 
                 if k in batch_dict[space_name]:
-                    # 기존 torch 배열의 Batch 축에 concatenate
-                    batch_dict[space_name][k] = torch.cat([tensor_data, batch_dict[space_name][k]], dim=0)
+                    # 기존 jnp 배열의 Batch 축에 concatenate
+                    batch_dict[space_name][k] = jnp.concatenate([jnp_tensor_data, batch_dict[space_name][k]], axis=0)
                 else:
-                    batch_dict[space_name][k] = tensor_data
+                    batch_dict[space_name][k] = jnp_tensor_data
 
         # 모든 공간에 대해 데이터를 추출
         for shm_lock, shm_inf in self.lock_manager.shm_mutexes:

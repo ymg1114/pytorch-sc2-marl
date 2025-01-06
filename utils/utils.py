@@ -3,7 +3,6 @@ import os, sys
 import jax
 import ctypes
 import json
-import torch
 import time
 import platform
 import psutil
@@ -132,18 +131,9 @@ model_dir = os.path.join(result_dir, "models")
 ErrorComment = "Should be PPO or IMPALA"
 
 
-flatten = lambda obj: obj.numpy().reshape(-1).astype(np.float32)
+# flatten = lambda obj: obj.numpy().reshape(-1).astype(np.float32)
 
-
-def to_torch(array):
-    if isinstance(array, np.ndarray):
-        return torch.from_numpy(array).float()
-    elif isinstance(array, torch.Tensor):
-        return array
-    else:
-        raise TypeError("Input should be a numpy array or a torch tensor")
     
-
 def extract_file_num(filename):
     parts = filename.stem.split("_")
     try:

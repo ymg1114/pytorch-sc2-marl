@@ -1,4 +1,3 @@
-# import torch
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -32,8 +31,9 @@ class WrapperSC2Env(StarCraft2Env):
         self.rewarder = Rewarder(self)
         self.observer = Observer(self)
 
+    #TODO: 부득이하게, jax.jit 포기 / act_dict라는 dict-container의 입력값 자체를 수정하기 때문에 순수 함수가 아니게 됨. 따라서 Side Effect 발생
     @staticmethod
-    @partial(jax.jit, static_argnums=(1,))
+    # @partial(jax.jit, static_argnums=(1,))
     def act_dict_converter(act_dict, n_actions_no_attack):
         act_sampled = act_dict["act_sampled"]
         move_sampled = act_dict["move_sampled"]
@@ -42,28 +42,30 @@ class WrapperSC2Env(StarCraft2Env):
         # assert self.n_actions_no_attack == 6
         
         # 초기화
-        actions = jnp.zeros_like(act_sampled)
+        actions = jnp.zeros_like(act_sampled, dtype=act_sampled.dtype)
 
         # NO_OP, STOP 행동은 그대로 가져감
-        act_idx = jnp.where((act_sampled == NO_OP_IDX) | (act_sampled == STOP_IDX))
-        actions.at[act_idx].set(act_sampled[act_idx])
+        act_mask = (act_sampled == NO_OP_IDX) | (act_sampled == STOP_IDX)
+        actions = jnp.where(act_mask, act_sampled, actions)
 
         # MOVE 행동은 해당 움직임의 방향 인덱스로 변경
         # NO_OP, STOP 2개 행동 이후부터 4개 -> MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST
-        move_idx = jnp.where(act_sampled == MOVE_IDX)
-        act_dict["on_select_move"].at[move_idx].set(1.0) # 선택했음을 알려줌
-        actions.at[move_idx].set(move_sampled[move_idx] + 2) # 실제 행동 인덱스에 맞추기 위해 shift
+        move_mask = act_sampled == MOVE_IDX
+        act_dict["on_select_move"] = jnp.where(move_mask, 1.0, act_dict["on_select_move"]) # 선택했음을 알려줌
+        # act_dict["on_select_move"].at[jnp.where(move_mask)[0]].set(1.0)
+        actions = jnp.where(move_mask, move_sampled + 2, actions)  # 실제 행동 인덱스에 맞추기 위해 shift
 
         # TARGET 행동은 해당 유닛 인덱스로 변경
         # NO_OP, STOP, MOVE_NORTH, MOVE_SOUTH, MOVE_EAST, MOVE_WEST 6개 행동 이후부터 나머지
-        tar_idx = jnp.where(act_sampled == TARGET_IDX)
-        act_dict["on_select_target"].at[tar_idx].set(1.0) # 선택했음을 알려줌
-        actions.at[tar_idx].set(target_sampled[tar_idx] + n_actions_no_attack)  # 실제 행동 인덱스에 맞추기 위해 shift
+        target_mask = act_sampled == TARGET_IDX
+        act_dict["on_select_target"] = jnp.where(target_mask, 1.0, act_dict["on_select_target"]) # 선택했음을 알려줌
+        # act_dict["on_select_target"].at[jnp.where(target_mask)[0]].set(1.0)
+        actions = jnp.where(target_mask, target_sampled + n_actions_no_attack, actions)  # 실제 행동 인덱스에 맞추기 위해 shift
 
         # TODO: FLEE 행동은 -1번 인덱스 행동으로 임의로 맵핑 (신경망 logits 레벨에서는 4번)
-        flee_idx = jnp.where(act_sampled == FLEE_IDX)
-        actions.at[flee_idx].set(-1)
-        
+        flee_mask = act_sampled == FLEE_IDX
+        actions = jnp.where(flee_mask, -1, actions)
+
         return actions
 
     def unit_shoot_range(self, agent_id):
@@ -156,7 +158,7 @@ class WrapperSC2Env(StarCraft2Env):
         assert self.heuristic_ai == False, f"일단 이 경우만 다룬다. heuristic_ai: {self.heuristic_ai}"
         assert self.n_actions_no_attack == 6
         
-        actions_int = [int(a) for a in WrapperSC2Env.act_dict_converter(act_dict, self.n_actions_no_attack)]
+        actions_int = [int(a.item()) for a in WrapperSC2Env.act_dict_converter(act_dict, self.n_actions_no_attack)]
 
         self.last_action = np.eye(self.n_actions)[np.array(actions_int)]
 
@@ -215,7 +217,7 @@ class WrapperSC2Env(StarCraft2Env):
         for aid, (_al_id, al_unit) in enumerate(self.agents.items()):
             if al_unit.health == 0:
                 dead_allies += 1
-                dead_agents_vec.at[aid].set(1.0) # next-state 기준 죽은 에이전트
+                dead_agents_vec = dead_agents_vec.at[aid].set(1) # next-state 기준 죽은 에이전트
                 
                 for e in range(self.n_enemies):
                     if self.enemy_tags[e] == _al_id:
@@ -231,6 +233,7 @@ class WrapperSC2Env(StarCraft2Env):
 
         info["dead_allies"] = dead_allies
         info["dead_enemies"] = dead_enemies
+        info["dead_agents_vec"] = dead_agents_vec
 
         if game_end_code is not None:
             # Battle is over

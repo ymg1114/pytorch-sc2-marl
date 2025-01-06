@@ -96,11 +96,7 @@ class Observer():
         obs_enemy = self.get_obs_enemy(self.obs_total)
         
         self.update_hp()
-        
-        assert obs_mine.shape == (self.n_agents, len(self.mine_feats_names))
-        assert obs_ally.shape == (self.n_agents, len(self.ally_feats_names))
-        assert obs_enemy.shape == (self.n_agents, len(self.enemy_feats_names))
-        
+                
         obs_mine, obs_ally, obs_enemy = _jit_get_obs_vmap(
             obs_mine,
             obs_ally,
@@ -108,6 +104,10 @@ class Observer():
             self.hp_delta,
             self.n_allies
             )
+        
+        assert obs_mine.shape == (self.n_agents, len(self.mine_feats_names))
+        assert obs_ally.shape == (self.n_agents, len(self.ally_feats_names))
+        assert obs_enemy.shape == (self.n_agents, len(self.enemy_feats_names))
         
         return {
             "obs_mine": obs_mine,

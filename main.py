@@ -1,4 +1,17 @@
 import os, sys
+# os.environ["JAX_PLATFORM_NAME"] = 'cpu'  # TODO: 임시로 CPU로 설정
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["XLA_FLAGS"] = ( # XLA 컴파일러 최적화 옵션 플래그
+    "--xla_gpu_triton_gemm_any=true "
+    "--xla_gpu_enable_latency_hiding_scheduler=true "
+    "--xla_gpu_enable_command_buffer=CUDNN "
+)
+
+# import jax
+# JAX 기본 설정, 필요시 CUDA 세팅
+# jax.config.update('jax_platform_name', 'cpu')  # os.environ["JAX_PLATFORM_NAME"] = 'cpu'와 동일한 효과. 런타임에서 변경이 불가
+# jax.config.update('jax_default_device', jax.devices('cpu')[0])
+
 # import io
 import signal
 # import atexit
@@ -6,7 +19,6 @@ import time
 # import gymnasium as gym
 # import copy
 
-import jax
 import traceback
 # import asyncio
 import uvloop
@@ -48,8 +60,6 @@ from utils.utils import (
 )
 from utils.lock import Mutex, LockManager
 
-# JAX 기본 설정. 필요시 CUDA 세팅
-jax.config.update('jax_default_device', jax.devices('cpu')[0])
 
 fn_dict = {}
 child_process = {} # 전역 변수로 child_process 관리
@@ -363,7 +373,7 @@ class Runner:
         )
 
     def start(self):
-        def _monitor_child_process(restart_delay=30):
+        def _monitor_child_process(restart_delay=60):
             def _restart_process(src, heartbeat):
                 traceback.print_exc(limit=128)
 

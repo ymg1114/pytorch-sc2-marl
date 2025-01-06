@@ -15,7 +15,7 @@ from .network_lib import Symlog, save_state, load_state, get_act_outs, get_forwa
 
 
 class ModelSingle(nnx.Module):
-    def __init__(self, args, env_space: "EnvSpace", rngs=nnx.Rngs(0, noise=1)):
+    def __init__(self, args, env_space: "EnvSpace", *, rngs=nnx.Rngs(0, noise=1)):
         super().__init__()
         # Network dimension setting
         # self.args = args
@@ -68,8 +68,8 @@ class ModelSingle(nnx.Module):
         
         return jnp.linspace(-20, 20, self.num_bins)
 
-    @staticmethod
-    def load_model_weight(args, flax_model, device=jax.devices("cpu")[0]):
+    @classmethod
+    def load_model_weight(cls, args, env_space, device=jax.devices("cpu")[0]):
         """
         Load model weights for a Flax model.
         """
@@ -79,7 +79,7 @@ class ModelSingle(nnx.Module):
         model_dirs = list(model_dir.glob(f"{args.algo}_*"))
         if not model_dirs:
             print(f"No model directories found under {model_dir} with prefix {args.algo}")
-            return flax_model, None
+            return None, None
 
         # # Extract idx values and find the highest one
         # def extract_idx(path):
@@ -92,7 +92,8 @@ class ModelSingle(nnx.Module):
         highest_idx_dir = model_dirs[0]  # Directory with the highest idx
         load_path = highest_idx_dir.resolve()
 
-        abstract_model = nnx.eval_shape(lambda: flax_model)
+        # abstract_model = nnx.eval_shape(lambda: flax_model)
+        abstract_model = nnx.eval_shape(lambda: cls(args, env_space, rngs=nnx.Rngs(0, noise=1)))
         graphdef, abstract_state = nnx.split(abstract_model)
 
         restored_pure_dict, overall_model_states = load_state(abstract_state.to_pure_dict(), load_path)
@@ -116,7 +117,7 @@ class ModelSingle(nnx.Module):
         return model, overall_model_states
 
     @staticmethod
-    def save_model_weight(path, idx, scale, flax_model, optim_pure_dict):
+    def save_model_weight(path, idx, scale, flax_model, optim_state):
         """
         Save model weights for a Flax model.
         """
@@ -134,7 +135,7 @@ class ModelSingle(nnx.Module):
             "model_pure_dict": pure_dict_state,
             "log_idx": idx,
             "scale": scale,
-            "optim_pure_dict": optim_pure_dict,
+            "optim_state": optim_state,
         }
 
         # # Save checkpoint

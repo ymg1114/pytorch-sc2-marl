@@ -67,11 +67,12 @@ def jax_device_movement(batch_dict, device):
 def append_loss(trg_loss, src_loss=jnp.nan):
     return jax.lax.cond(
         jnp.isnan(src_loss).any(),
-        lambda: trg_loss,
-        lambda: jax.lax.cond(
+        lambda _: trg_loss,
+        lambda _: jax.lax.cond(
             jnp.isnan(trg_loss).any(),
-            lambda: src_loss,
-            lambda: src_loss + trg_loss,
+            lambda _: src_loss,
+            lambda _: src_loss + trg_loss,
+            operand=None
         ),
         operand=None
     )
@@ -571,7 +572,7 @@ async def learning(parent, train_step, timer: ExecutionTimer):
                         parent.idx,
                         scale,
                         parent.model,
-                        nnx.state(parent.optimizer).to_pure_dict(),
+                        nnx.state(parent.optimizer),
                     )
 
                 parent.idx += 1

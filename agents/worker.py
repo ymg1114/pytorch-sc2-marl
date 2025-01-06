@@ -38,11 +38,12 @@ class Worker:
         print(f"Worker: {worker_name}, device: {self.device}")
         
         self.env_space = env_space
-
-        model = model_cls(self.args, self.env_space)
-        self.model, _  = model_cls.load_model_weight(self.args, model)
-        # self.abstract_model = nnx.eval_shape(lambda: self.model)
+        self.model_cls = model_cls
         
+        self.model, _  = model_cls.load_model_weight(self.args, self.env_space)
+        if self.model is None:
+            self.model = model_cls(self.args, self.env_space)
+
         self.worker_name = worker_name
         self.stop_event = stop_event
         self.heartbeat = heartbeat
@@ -90,7 +91,8 @@ class Worker:
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
     def load_flax_model(self, pure_dict):
-        abstract_model = nnx.eval_shape(lambda: self.model)
+        # abstract_model = nnx.eval_shape(lambda: self.model)
+        abstract_model = nnx.eval_shape(lambda: self.model_cls(self.args, self.env_space, rngs=nnx.Rngs(0, noise=1)))
         graphdef, abstract_state = nnx.split(abstract_model)
         abstract_state.replace_by_pure_dict(pure_dict)
         # return nnx.merge(graphdef, abstract_state)

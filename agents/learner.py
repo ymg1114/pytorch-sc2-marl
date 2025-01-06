@@ -89,9 +89,11 @@ class LearnerBase(ABC):
             avg_ratio=nnx.metrics.Average('avg_ratio'),
         )
 
-        model = model_cls(self.args, self.env_space)
-
-        self.model, overall_model_states = model_cls.load_model_weight(self.args, model, self.device)
+        self.model, overall_model_states = model_cls.load_model_weight(self.args, self.env_space, self.device)
+        if self.model is None:
+            self.model = model_cls(self.args, self.env_space)
+            assert overall_model_states is None
+        
         if overall_model_states is not None:
             self.idx = overall_model_states["log_idx"]
             self.scale = overall_model_states["scale"]
@@ -100,11 +102,11 @@ class LearnerBase(ABC):
             optax.clip_by_global_norm(self.args.max_grad_norm),
             optax.adam(learning_rate=self.args.lr),
         )
-        self.optimizer = nnx.Optimizer(model, tx)
+        self.optimizer = nnx.Optimizer(self.model, tx)
         if overall_model_states is not None:
-            optim_graphdef, optim_state = nnx.split(self.optimizer)
-            optim_state.replace_by_pure_dict(overall_model_states["optim_pure_dict"])
-            nnx.update(self.optimizer, optim_state)
+            # optim_graphdef, optim_state = nnx.split(self.optimizer)
+            # optim_state.replace_by_pure_dict(overall_model_states["optim_state"])
+            nnx.update(self.optimizer, overall_model_states["optim_state"])
 
         self.zeromq_set(learner_ip, learner_worker_port)
 
@@ -156,12 +158,12 @@ class LearnerBase(ABC):
         if self.stat_q.qsize() > 0:
             stat_dict = await self.stat_q.get()
             for k, v in stat_dict.items():
-                if k == "epi_rev_vec":
+                if k == "epi_rew_vec":
                     tag = f"stat-{k}"
                     y = jnp.mean(v)
                     self.writer.scalar(tag, y, self.idx)
 
-            _mean_rev_vec = jnp.mean(stat_dict["epi_rev_vec"], axis=0)
+            _mean_rev_vec = jnp.mean(stat_dict["epi_rew_vec"], axis=0)
 
             for rdx, (r_param, weight) in enumerate(REWARD_PARAM.items()):
                 tag = f"mean-weighted-reward-{r_param}"

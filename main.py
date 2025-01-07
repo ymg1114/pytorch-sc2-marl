@@ -1,4 +1,42 @@
 import os, sys
+
+"""
+참고 a) https://github.com/danijar/dreamerv3/blob/f8817c4040cebada9bb9712554b0234c70c291d5/embodied/jax/internal.py#L15
+DreamerV3의 경우, JAX를 사용할 때, JAX의 XLA_FLAGS를 설정하는 방법을 제시하고 있음.
+
+
+참고 b) https://jax.readthedocs.io/en/latest/xla_flags.html, https://jax.readthedocs.io/en/latest/gpu_performance_tips.html, https://github.com/NVIDIA/JAX-Toolbox/blob/main/rosetta/docs/GPU_performance.md
+Set XLA_FLAGS before importing Jax or other relevant libraries.
+Changing XLA_FLAGS after backend initialization will have no effect
+and given backend initialization time is not clearly defined it is usually safer to set XLA_FLAGS before executing any Jax code.
+
+
+참고 c) https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
+JAX will preallocate 75% of the total GPU memory when the first JAX operation is run.
+Preallocating minimizes allocation overhead and memory fragmentation, but can sometimes cause out-of-memory (OOM) errors.
+If your JAX process fails with OOM, the following environment variables can be used to override the default behavior:
+
+XLA_PYTHON_CLIENT_PREALLOCATE=false
+This disables the preallocation behavior. JAX will instead allocate GPU memory as needed, potentially decreasing the overall memory usage.
+However, this behavior is more prone to GPU memory fragmentation, meaning a JAX program that uses most of the available GPU memory may OOM with preallocation disabled.
+
+XLA_PYTHON_CLIENT_MEM_FRACTION=.XX
+If preallocation is enabled, this makes JAX preallocate XX% of the total GPU memory, instead of the default 75%.
+Lowering the amount preallocated can fix OOMs that occur when the JAX program starts.
+
+
+참고 d) https://jax.readthedocs.io/en/latest/faq.html#faq-data-placement
+In JAX, the computation follows data placement. JAX arrays have two placement properties:
+1) the device where the data resides; and
+2) whether it is committed to the device or not (the data is sometimes referred to as being sticky to the device).
+
+By default, JAX arrays are placed uncommitted on the default device (jax.devices()[0]), which is the first GPU or TPU by default.
+If no GPU or TPU is present, jax.devices()[0] is the CPU.
+The default device can be temporarily overridden with the jax.default_device() context manager,
+or set for the whole process by setting the environment variable JAX_PLATFORMS or the absl flag --jax_platforms to “cpu”, “gpu”, or “tpu”
+(JAX_PLATFORMS can also be a list of platforms, which determines which platforms are available in priority order).
+"""
+
 # os.environ["JAX_PLATFORM_NAME"] = 'cpu'  # TODO: 임시로 CPU로 설정
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_FLAGS"] = ( # XLA 컴파일러 최적화 옵션 플래그

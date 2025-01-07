@@ -1,10 +1,17 @@
 import os
+import subprocess
 
-from utils.utils import Machines
+from concurrent.futures import ThreadPoolExecutor
 
-"""SSH 인증서에 대한 설정이 되어있다고 가정
-miniconda3 환경을 대상으로 함.
-"""
+
+def run_command(command, description=""):
+    """Run a shell command and handle errors."""
+    try:
+        print(f"Executing: {command} ({description})")
+        subprocess.run(command, shell=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing {description}: {e}")
+        raise
 
 
 def append_command(commands, new_command):
@@ -13,10 +20,6 @@ def append_command(commands, new_command):
 
 def start_tmux_session(commands, session_name):
     return append_command(commands, f"tmux new-session -d -s {session_name}")
-
-
-def conda_pack(commands, session_name, conda_env, local_env_file):
-    return append_command(commands, f"tmux send-keys -t {session_name} 'conda pack -n {conda_env} -o {local_env_file}' C-m")
 
 
 def ssh_connect(commands, session_name, account, remote_ip):
@@ -31,45 +34,60 @@ def copy_file(commands, session_name, local_file, account, remote_ip, home_dir):
     return append_command(commands, f"tmux send-keys -t {session_name} 'scp {local_file} {account}@{remote_ip}:{home_dir}' C-m")
 
 
-def move_file(commands, session_name, source_file, target_dir):
-    return append_command(commands, f"tmux send-keys -t {session_name} 'mv {source_file} {target_dir}' C-m")
-
-
 def extract_tar(commands, session_name, tar_file, remote_dir):
     return append_command(commands, f"tmux send-keys -t {session_name} 'tar -xzf {tar_file} -C {remote_dir}' C-m")
 
 
-if __name__ == "__main__":
+def deploy_to_machine(remote_ip, session_name, local_env_file, account, conda_env, home_dir):
+    remote_dir = f"~/miniconda3/envs/{conda_env}"
     commands = ""
 
-    account = "..."  # conda env 압축 전송 머신의 계정
-    remote_ip = "..."  # conda env 압축 전송 머신의 ip
-    home_dir = "~"
-
-    conda_env = "..."  # 압축해서 전송할 conda 환경 이름
-    remote_dir = f"~/miniconda3/envs/{conda_env}"
-    local_env_file = f"~/{conda_env}.tar.gz"
-
-    session_name = f"..." # 작업을 수행할 tmux-interactive 세션 이름
-
-    # tmux 세션 시작
+    # Start tmux session
     commands = start_tmux_session(commands, session_name)
 
-    # Conda 환경을 압축하는 명령어 (conda-pack 사용, tmux 세션 내에서 실행)
-    commands = conda_pack(commands, session_name, conda_env, local_env_file)
-
-    # 압축된 Conda 환경 파일 전송 (홈 디렉터리로 일단 전송)
+    # Copy packed Conda environment to the remote server
     commands = copy_file(commands, session_name, local_env_file, account, remote_ip, home_dir)
 
-    # SSH 연결
+    # SSH into the server
     commands = ssh_connect(commands, session_name, account, remote_ip)
 
-    # 원격 디렉토리 생성
+    # Create remote directory
     commands = make_remote_directory(commands, session_name, remote_dir)
 
-    # 원격 서버에서 압축 해제
+    # Extract the tar file on the remote server
     commands = extract_tar(commands, session_name, local_env_file, remote_dir)
 
-    # 실제 명령어 실행
-    os.system(commands)
-    print(f"commands: \n{commands}")
+    # Execute tmux commands
+    run_command(commands, description=f"Deploy to {remote_ip}")
+    
+    run_command("sleep 300", description=f"Manual Sleep to wait tmux-process to be Done")
+    
+    # Terminate the tmux session
+    run_command(f"tmux kill-session -t {session_name}", description=f"Clean up tmux session {session_name}")
+    print(f"Deployment to {remote_ip} completed.")
+
+
+if __name__ == "__main__":
+    home_dir = "~"
+    account = "id"  # Fixed account name for SSH
+    remote_ips = ["ip1", "ip2", "ip3"]  # List of remote machine IPs
+    conda_env = "envName"  # Conda environment to pack and deploy
+    local_env_file = f"~/{conda_env}.tar.gz"
+    session_names = [f"{ip.replace('.', '_')}_#{idx}" for idx, ip in enumerate(remote_ips)]
+
+    # Pack the local Conda environment
+    print("Packing Conda environment...")
+    run_command(f"conda pack -n {conda_env} -o {local_env_file}", description="Conda pack")
+    print(f"Conda environment packed: {local_env_file}")
+
+    # Deploy the Conda environment to all remote machines in parallel
+    print("Starting deployment to remote machines...")
+    with ThreadPoolExecutor() as executor:
+        futures = [
+            executor.submit(deploy_to_machine, ip, session_name, local_env_file, account, conda_env, home_dir)
+            for ip, session_name in zip(remote_ips, session_names)
+        ]
+        for future in futures:
+            future.result()
+
+    print("Deployment completed to all machines!")

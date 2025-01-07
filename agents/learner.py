@@ -158,7 +158,7 @@ class LearnerBase(ABC):
         if self.stat_q.qsize() > 0:
             stat_dict = await self.stat_q.get()
             for k, v in stat_dict.items():
-                if k == "epi_rew_vec":
+                if k != "epi_rew_vec":
                     tag = f"stat-{k}"
                     y = jnp.mean(v)
                     self.writer.scalar(tag, y, self.idx)

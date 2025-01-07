@@ -69,12 +69,10 @@ def loss_fn(
 
     # PPO loss calculations
     ratio = jnp.exp(log_probs[:, :-1] - behav_log_probs[:, :-1])
-    surr1 = ratio * gae
-    surr2 = jnp.clip(ratio, 1 - eps_clip, 1 + eps_clip) * gae
 
     # Policy loss 계산
-    masked_surr1 = jnp.where(valid_mine_mask, surr1, 0.0)
-    masked_surr2 = jnp.where(valid_mine_mask, surr2, 0.0)
+    masked_surr1 = jnp.where(valid_mine_mask, ratio * gae, 0.0)
+    masked_surr2 = jnp.where(valid_mine_mask, jnp.clip(ratio, 1 - eps_clip, 1 + eps_clip) * gae, 0.0)
 
     loss_policy = jax.lax.cond(
         valid_mine_mask.sum() > 0,

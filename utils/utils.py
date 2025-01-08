@@ -142,6 +142,16 @@ def extract_file_num(filename):
         return -1
 
 
+def generate_random_jax_key():
+    # 현재 시간을 seed로 사용하여 새로운 키 생성
+    seed = int(time.time())
+    key = jax.random.PRNGKey(seed)
+    
+    # 키를 분할하여 서브키 생성
+    key, subkey = jax.random.split(key)
+    return subkey
+
+
 # def make_gpu_batch(*args, device):
 #     to_gpu = lambda tensor: tensor.to(device)
 #     return tuple(map(to_gpu, args))

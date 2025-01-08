@@ -118,7 +118,6 @@ def get_act_outs(
     key1, key2, key3 = jax.random.split(seed, 3)
 
     # Sample actions
-    #TODO: Seed 상태가 ...
     act_sampled = dist_act.sample(seed=key1)
     move_sampled = dist_move.sample(seed=key2)
     target_sampled = dist_target.sample(seed=key3)

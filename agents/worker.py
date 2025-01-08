@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from utils.utils import Protocol, encode, decode, SC2Config
+from utils.utils import Protocol, encode, decode, SC2Config, generate_random_jax_key
 from env.sc2_env_wrapper import WrapperSMAC2
 from rewarder.rewarder import REWARD_PARAM
 from typing import TYPE_CHECKING
@@ -192,7 +192,7 @@ class Worker:
             # is_full = [False] # TODO: 디버그 완료 후, 제거 필요
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
-                act_dict = jax_model_act(self.model, obs_dict, hx, cx)
+                act_dict = jax_model_act(self.model, obs_dict, hx, cx, generate_random_jax_key())
                 self.set_default_actions(act_dict)
                 
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
@@ -242,7 +242,7 @@ class TestWorker(Worker):
             # is_full = [False] # TODO: 디버그 완료 후, 제거 필요
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
-                act_dict = jax_model_act(self.model, obs_dict, hx, cx)
+                act_dict = jax_model_act(self.model, obs_dict, hx, cx, generate_random_jax_key())
                 self.set_default_actions(act_dict)
                                 
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)

@@ -195,17 +195,31 @@ class ModelSingle(nnx.Module):
         return self.norm_attn(nnx.relu(self.encode_attn(ec_body)))
 
     def act(
-        self, obs_dict: Dict[str, jnp.ndarray], hx: jnp.ndarray, cx: jnp.ndarray
+        self, obs_dict: Dict[str, jnp.ndarray], hx: jnp.ndarray, cx: jnp.ndarray, key: jnp.ndarray,
     ) -> Dict[str, jnp.ndarray]:
         obs_tuple = self.dict_ordering(obs_dict)
-        return self._act(obs_tuple, hx, cx)
+        return self._act(obs_tuple, hx, cx, key)
 
     def _act(
         self,
         obs_tuple: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
         hx: jnp.ndarray,
         cx: jnp.ndarray,
+        key: jnp.ndarray,
     ) -> Dict[str, jnp.ndarray]:
+        """
+        참고) https://jax.readthedocs.io/en/latest/random-numbers.html#pseudorandom-numbers
+        
+        The key is effectively a stand-in for NumPy’s hidden state object, but we pass it explicitly to jax.random() functions.
+        Importantly, random functions consume the key, but do not modify it: feeding the same key object to a random function will always result in the same sample being generated.
+        
+        Re-using the same key, even with different random APIs, can result in correlated outputs, which is generally undesirable.
+        The rule of thumb is: never reuse keys (unless you want identical outputs).
+        JAX uses a modern Threefry counter-based PRNG that’s splittable.
+        That is, its design allows us to fork the PRNG state into new PRNGs for use with parallel stochastic generation.
+        In order to generate different and independent samples, you must split() the key explicitly before passing it to a random function:
+        """
+        
         out_encode = self.body_encode(obs_tuple[:3])
         (cx, hx), out_hx = self.lstmcell((cx, hx), out_encode)
 
@@ -214,7 +228,7 @@ class ModelSingle(nnx.Module):
         logit_target = self.logit_target(out_hx)
 
         act_outs = get_act_outs(
-            logit_act, logit_move, logit_target, obs_tuple[3:], jax.random.PRNGKey(0),
+            logit_act, logit_move, logit_target, obs_tuple[3:], key,
         )
         
         out_dict = {
@@ -286,5 +300,5 @@ def jax_model_forward(model: ModelSingle, obs_dict, act_dict, hx, cx):
 
 
 @nnx.jit
-def jax_model_act(model: ModelSingle, obs_dict, hx, cx):
-    return model.act(obs_dict, hx, cx)
+def jax_model_act(model: ModelSingle, obs_dict, hx, cx, key):
+    return model.act(obs_dict, hx, cx, key)

@@ -142,9 +142,9 @@ def extract_file_num(filename):
         return -1
 
 
-def generate_random_jax_key():
+def generate_random_jax_key(worker_id):
     # 현재 시간을 seed로 사용하여 새로운 키 생성
-    seed = int(time.time())
+    seed = int(time.monotonic()) + int(worker_id) * 1000
     key = jax.random.PRNGKey(seed)
     
     # 키를 분할하여 서브키 생성

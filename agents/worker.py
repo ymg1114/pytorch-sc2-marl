@@ -45,6 +45,7 @@ class Worker:
             self.model = model_cls(self.args, self.env_space)
 
         self.worker_name = worker_name
+        self.worker_id = int(worker_name.split("_")[-1])
         self.stop_event = stop_event
         self.heartbeat = heartbeat
 
@@ -192,7 +193,7 @@ class Worker:
             # is_full = [False] # TODO: 디버그 완료 후, 제거 필요
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
-                act_dict = jax_model_act(self.model, obs_dict, hx, cx, generate_random_jax_key())
+                act_dict = jax_model_act(self.model, obs_dict, hx, cx, generate_random_jax_key(self.worker_id))
                 self.set_default_actions(act_dict)
                 
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)
@@ -242,7 +243,7 @@ class TestWorker(Worker):
             # is_full = [False] # TODO: 디버그 완료 후, 제거 필요
             for _ in range(self.env_info["episode_limit"]):
                 obs_dict = self.env.get_obs_dict()
-                act_dict = jax_model_act(self.model, obs_dict, hx, cx, generate_random_jax_key())
+                act_dict = jax_model_act(self.model, obs_dict, hx, cx, generate_random_jax_key(self.worker_id))
                 self.set_default_actions(act_dict)
                                 
                 rew_vec, terminated, info = self.env.step_dict(act_dict, dead_agents_vec)

@@ -72,7 +72,7 @@ def loss_fn(
 
     # Policy loss 계산
     masked_surr1 = jnp.where(valid_mine_mask, ratio * gae, 0.0)
-    masked_surr2 = jnp.where(valid_mine_mask, jnp.clip(ratio, 1 - eps_clip, 1 + eps_clip) * gae, 0.0)
+    masked_surr2 = jnp.where(valid_mine_mask, jax.lax.clamp(1.0 - eps_clip, ratio, 1.0 + eps_clip) * gae, 0.0)
 
     loss_policy = jax.lax.cond(
         valid_mine_mask.sum() > 0,
